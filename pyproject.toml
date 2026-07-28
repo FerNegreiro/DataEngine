@@ -15,4 +15,4 @@ select = ["E", "F", "I", "B"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
-addopts = "-ra"
+addopts = "-ra --basetemp=.pytest_tmp"
