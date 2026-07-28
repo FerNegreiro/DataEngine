@@ -20,3 +20,15 @@ O projeto está em fase inicial.
 ## Estrutura inicial
 
 A base Python e os testes do projeto foram configurados.
+
+## Geração de dados de produtos
+
+O módulo gera dados simulados de produtos de e-commerce para uso futuro nos pipelines e
+análises do projeto.
+
+```bash
+python -m src.extraction.generate_products
+```
+
+O CSV é gerado em `data/raw/products.csv`. Os dados são determinísticos por seed: a mesma
+seed produz os mesmos produtos.
