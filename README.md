@@ -58,3 +58,17 @@ São gerados `data/raw/orders.csv` e `data/raw/order_items.csv`, preservando os
 relacionamentos entre clientes, produtos, pedidos e itens. A geração é determinística por
 seed e aplica sazonalidade simples, com maior volume em novembro e dezembro, aumento em maio
 e menor volume em fevereiro.
+
+## Validação dos dados brutos
+
+O módulo valida estrutura, conteúdo, regras de negócio e relacionamentos dos arquivos
+`data/raw/products.csv`, `data/raw/customers.csv`, `data/raw/orders.csv` e
+`data/raw/order_items.csv`.
+
+```bash
+python -m src.validation.validate_raw_data
+```
+
+Uma execução bem-sucedida informa dados válidos e termina com código `0`. Dados inválidos
+produzem uma lista acumulada de erros e código `1`. Essa validação ocorre antes das próximas
+camadas de processamento do pipeline.
