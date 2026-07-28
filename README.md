@@ -72,3 +72,17 @@ python -m src.validation.validate_raw_data
 Uma execução bem-sucedida informa dados válidos e termina com código `0`. Dados inválidos
 produzem uma lista acumulada de erros e código `1`. Essa validação ocorre antes das próximas
 camadas de processamento do pipeline.
+
+## Processamento para Parquet
+
+O módulo valida e converte `data/raw/products.csv`, `data/raw/customers.csv`,
+`data/raw/orders.csv` e `data/raw/order_items.csv` nos arquivos correspondentes em
+`data/processed`, preservando linhas, colunas, tipos e relacionamentos.
+
+```bash
+python -m src.transformation.process_raw_to_parquet
+```
+
+O processamento só começa após a validação dos dados brutos e grava os arquivos Parquet com
+compressão Snappy. O formato Parquet é adequado para pipelines por oferecer armazenamento
+colunar compacto, leitura eficiente e preservação explícita dos tipos de dados.
