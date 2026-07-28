@@ -86,3 +86,23 @@ python -m src.transformation.process_raw_to_parquet
 O processamento só começa após a validação dos dados brutos e grava os arquivos Parquet com
 compressão Snappy. O formato Parquet é adequado para pipelines por oferecer armazenamento
 colunar compacto, leitura eficiente e preservação explícita dos tipos de dados.
+
+## Execução com Docker
+
+O container reproduzível executa o pipeline completo: gera produtos, clientes, pedidos e
+itens, valida os dados brutos e cria os arquivos Parquet processados.
+
+```bash
+docker compose build
+docker compose up
+```
+
+Como alternativa para uma execução isolada:
+
+```bash
+docker compose run --rm dataengine
+```
+
+Os volumes `./data/raw:/app/data/raw` e `./data/processed:/app/data/processed` preservam no
+host os quatro CSVs brutos e os quatro Parquets gerados pelo container. Nesta etapa ainda
+não há integração com AWS, BigQuery ou Airflow.

@@ -1,0 +1,11 @@
+services:
+  dataengine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dataengine-pipeline
+    volumes:
+      - ./data/raw:/app/data/raw
+      - ./data/processed:/app/data/processed
+    command: ["python", "-m", "pipelines.run_pipeline"]
+    restart: "no"

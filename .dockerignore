@@ -1,0 +1,16 @@
+.venv
+.git
+.gitignore
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+.pytest_tmp
+.ruff_cache
+.vscode
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+docs
+*.log
