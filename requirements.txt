@@ -1,0 +1,8 @@
+pandas
+pyarrow
+faker
+pydantic
+python-dotenv
+pytest
+pytest-cov
+ruff
