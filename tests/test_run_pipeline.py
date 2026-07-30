@@ -12,19 +12,30 @@ from pipelines.run_pipeline import run_pipeline
 @pytest.fixture(scope="module", autouse=True)
 def mock_s3_upload():
     def fake_upload(processed_dir: Path | str) -> dict[str, object]:
+        partition = "year=2026/month=01/day=02"
         filenames = (
             "customers.parquet",
             "orders.parquet",
             "order_items.parquet",
             "products.parquet",
         )
+        files = []
+        for filename in filenames:
+            object_key = f"bronze/{Path(filename).stem}/{partition}/{filename}"
+            files.append(
+                {
+                    "local_path": str(Path(processed_dir) / filename),
+                    "bucket": "test-bucket",
+                    "object_key": object_key,
+                    "s3_uri": f"s3://test-bucket/{object_key}",
+                }
+            )
         return {
-            "bucket": "test-bucket",
+            "execution_date": "2026-01-02T03:04:05+00:00",
+            "partition": partition,
             "uploaded_count": len(filenames),
-            "files": [
-                {"local_path": str(Path(processed_dir) / filename)}
-                for filename in filenames
-            ],
+            "bucket": "test-bucket",
+            "files": files,
         }
 
     with patch.object(pipeline_module, "upload_processed_files", fake_upload):
@@ -151,6 +162,7 @@ def test_pipeline_report_has_expected_structure(
     ]
     assert successful_pipeline["s3"]["bucket"] == "test-bucket"
     assert successful_pipeline["s3"]["uploaded_count"] == 4
+    assert successful_pipeline["s3"]["partition"] == "year=2026/month=01/day=02"
 
 
 def test_pipeline_is_deterministic(tmp_path: Path) -> None:
@@ -250,7 +262,13 @@ def test_direct_execution_returns_zero_on_success(
         "processed_files": {},
         "rows": {"products": 1, "customers": 1, "orders": 1, "order_items": 1},
         "validation": {"is_valid": True, "errors": [], "warnings": []},
-        "s3": {"bucket": "test-bucket", "uploaded_count": 4, "files": []},
+        "s3": {
+            "execution_date": "2026-01-02T03:04:05+00:00",
+            "partition": "year=2026/month=01/day=02",
+            "uploaded_count": 4,
+            "bucket": "test-bucket",
+            "files": [],
+        },
     }
     monkeypatch.setattr(pipeline_module, "run_pipeline", lambda: report)
 

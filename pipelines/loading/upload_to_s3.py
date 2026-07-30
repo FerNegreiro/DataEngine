@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -11,10 +12,10 @@ BUCKET_NAME = "dataengine-fernando-2026"
 DEFAULT_PROCESSED_DIR = Path("data/processed")
 
 FILES_TO_UPLOAD = {
-    "customers.parquet": "bronze/customers/customers.parquet",
-    "orders.parquet": "bronze/orders/orders.parquet",
-    "order_items.parquet": "bronze/order_items/order_items.parquet",
-    "products.parquet": "bronze/products/products.parquet",
+    "customers": "customers.parquet",
+    "orders": "orders.parquet",
+    "order_items": "order_items.parquet",
+    "products": "products.parquet",
 }
 
 logging.basicConfig(
@@ -23,6 +24,29 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _as_utc(execution_date: datetime | None) -> datetime:
+    if execution_date is None:
+        return datetime.now(timezone.utc)
+    if execution_date.tzinfo is None:
+        return execution_date.replace(tzinfo=timezone.utc)
+    return execution_date.astimezone(timezone.utc)
+
+
+def build_partitioned_key(
+    dataset_name: str,
+    filename: str,
+    execution_date: datetime | None = None,
+) -> str:
+    utc_execution_date = _as_utc(execution_date)
+    return (
+        f"bronze/{dataset_name}/"
+        f"year={utc_execution_date:%Y}/"
+        f"month={utc_execution_date:%m}/"
+        f"day={utc_execution_date:%d}/"
+        f"{filename}"
+    )
 
 
 def upload_file(
@@ -62,14 +86,26 @@ def upload_file(
 def upload_processed_files(
     processed_dir: Path | str = DEFAULT_PROCESSED_DIR,
     bucket_name: str = BUCKET_NAME,
+    execution_date: datetime | None = None,
 ) -> dict[str, object]:
     processed_directory = Path(processed_dir)
+    utc_execution_date = _as_utc(execution_date)
+    partition = (
+        f"year={utc_execution_date:%Y}/"
+        f"month={utc_execution_date:%m}/"
+        f"day={utc_execution_date:%d}"
+    )
     s3_client = boto3.client("s3")
 
     uploaded_files: list[dict[str, str]] = []
 
-    for filename, object_key in FILES_TO_UPLOAD.items():
+    for dataset_name, filename in FILES_TO_UPLOAD.items():
         local_path = processed_directory / filename
+        object_key = build_partitioned_key(
+            dataset_name=dataset_name,
+            filename=filename,
+            execution_date=utc_execution_date,
+        )
 
         upload_report = upload_file(
             s3_client=s3_client,
@@ -86,8 +122,10 @@ def upload_processed_files(
     )
 
     return {
-        "bucket": bucket_name,
+        "execution_date": utc_execution_date.isoformat(),
+        "partition": partition,
         "uploaded_count": len(uploaded_files),
+        "bucket": bucket_name,
         "files": uploaded_files,
     }
 
