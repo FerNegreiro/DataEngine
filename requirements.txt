@@ -6,3 +6,5 @@ python-dotenv
 pytest
 pytest-cov
 ruff
+boto3==1.43.60
+awscrt==0.36.0

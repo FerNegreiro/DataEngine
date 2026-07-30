@@ -1,4 +1,5 @@
 from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 import pytest
@@ -6,6 +7,28 @@ from pandas.testing import assert_frame_equal
 
 import pipelines.run_pipeline as pipeline_module
 from pipelines.run_pipeline import run_pipeline
+
+
+@pytest.fixture(scope="module", autouse=True)
+def mock_s3_upload():
+    def fake_upload(processed_dir: Path | str) -> dict[str, object]:
+        filenames = (
+            "customers.parquet",
+            "orders.parquet",
+            "order_items.parquet",
+            "products.parquet",
+        )
+        return {
+            "bucket": "test-bucket",
+            "uploaded_count": len(filenames),
+            "files": [
+                {"local_path": str(Path(processed_dir) / filename)}
+                for filename in filenames
+            ],
+        }
+
+    with patch.object(pipeline_module, "upload_processed_files", fake_upload):
+        yield
 
 
 @pytest.fixture(scope="module")
@@ -82,6 +105,7 @@ def test_validation_runs_before_processing(
     call_order: list[str] = []
     original_validation = pipeline_module.validate_raw_data
     original_processing = pipeline_module.process_raw_to_parquet
+    original_upload = pipeline_module.upload_processed_files
 
     def tracked_validation(**paths: Path | str) -> dict[str, object]:
         call_order.append("validation")
@@ -91,11 +115,16 @@ def test_validation_runs_before_processing(
         call_order.append("processing")
         return original_processing(**paths)
 
+    def tracked_upload(**options: Path | str) -> dict[str, object]:
+        call_order.append("upload")
+        return original_upload(**options)
+
     monkeypatch.setattr(pipeline_module, "validate_raw_data", tracked_validation)
     monkeypatch.setattr(pipeline_module, "process_raw_to_parquet", tracked_processing)
+    monkeypatch.setattr(pipeline_module, "upload_processed_files", tracked_upload)
     _run_in_directory(tmp_path)
 
-    assert call_order == ["validation", "processing"]
+    assert call_order == ["validation", "processing", "upload"]
 
 
 def test_pipeline_report_has_expected_structure(
@@ -107,6 +136,7 @@ def test_pipeline_report_has_expected_structure(
         "processed_files",
         "rows",
         "validation",
+        "s3",
     ]
     assert list(successful_pipeline["rows"]) == [
         "products",
@@ -119,6 +149,8 @@ def test_pipeline_report_has_expected_structure(
         "errors",
         "warnings",
     ]
+    assert successful_pipeline["s3"]["bucket"] == "test-bucket"
+    assert successful_pipeline["s3"]["uploaded_count"] == 4
 
 
 def test_pipeline_is_deterministic(tmp_path: Path) -> None:
@@ -218,11 +250,14 @@ def test_direct_execution_returns_zero_on_success(
         "processed_files": {},
         "rows": {"products": 1, "customers": 1, "orders": 1, "order_items": 1},
         "validation": {"is_valid": True, "errors": [], "warnings": []},
+        "s3": {"bucket": "test-bucket", "uploaded_count": 4, "files": []},
     }
     monkeypatch.setattr(pipeline_module, "run_pipeline", lambda: report)
 
     assert pipeline_module.main() == 0
-    assert "Pipeline concluído com sucesso" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "Pipeline concluído com sucesso" in output
+    assert "S3: 4 arquivo(s) enviado(s) para o bucket test-bucket" in output
 
 
 def test_direct_execution_returns_one_on_failure(

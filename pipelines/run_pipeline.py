@@ -4,6 +4,7 @@ from typing import TypeVar
 
 import pandas as pd
 
+from pipelines.loading.upload_to_s3 import upload_processed_files
 from src.extraction.generate_customers import generate_customers
 from src.extraction.generate_orders import generate_orders
 from src.extraction.generate_products import generate_products
@@ -113,6 +114,12 @@ def run_pipeline(
             output_dir=processed_directory,
         ),
     )
+    upload_report = _run_stage(
+        "upload para AWS S3 Bronze",
+        lambda: upload_processed_files(
+            processed_dir=processed_directory,
+        ),
+    )
 
     return {
         "success": True,
@@ -134,6 +141,7 @@ def run_pipeline(
             "errors": validation_report["errors"],
             "warnings": validation_report["warnings"],
         },
+        "s3": upload_report,
     }
 
 
@@ -147,6 +155,10 @@ def main() -> int:
     print("Pipeline concluído com sucesso")
     for name, rows in report["rows"].items():
         print(f"- {name}: {rows} linha(s)")
+    print(
+        f"- S3: {report['s3']['uploaded_count']} arquivo(s) enviado(s) "
+        f"para o bucket {report['s3']['bucket']}"
+    )
     return 0
 
 
