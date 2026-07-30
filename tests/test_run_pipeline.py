@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -11,8 +12,15 @@ from pipelines.run_pipeline import run_pipeline
 
 @pytest.fixture(scope="module", autouse=True)
 def mock_s3_upload():
-    def fake_upload(processed_dir: Path | str) -> dict[str, object]:
-        partition = "year=2026/month=01/day=02"
+    def fake_upload(
+        processed_dir: Path | str,
+        execution_date: datetime,
+    ) -> dict[str, object]:
+        partition = (
+            f"year={execution_date:%Y}/"
+            f"month={execution_date:%m}/"
+            f"day={execution_date:%d}"
+        )
         filenames = (
             "customers.parquet",
             "orders.parquet",
@@ -31,14 +39,53 @@ def mock_s3_upload():
                 }
             )
         return {
-            "execution_date": "2026-01-02T03:04:05+00:00",
+            "execution_date": execution_date.isoformat(),
             "partition": partition,
             "uploaded_count": len(filenames),
             "bucket": "test-bucket",
             "files": files,
         }
 
-    with patch.object(pipeline_module, "upload_processed_files", fake_upload):
+    def fake_silver_processing(
+        execution_date: datetime,
+        bucket_name: str,
+        staging_dir: Path | str,
+    ) -> dict[str, object]:
+        partition = (
+            f"year={execution_date:%Y}/"
+            f"month={execution_date:%m}/"
+            f"day={execution_date:%d}"
+        )
+        return {
+            "success": True,
+            "execution_date": execution_date.isoformat(),
+            "partition": partition,
+            "bucket": bucket_name,
+            "source_layer": "bronze",
+            "destination_layer": "silver",
+            "downloaded_count": 4,
+            "transformed_count": 4,
+            "uploaded_count": 4,
+            "input_rows": {},
+            "output_rows": {},
+            "validation": {
+                "is_valid": True,
+                "errors": [],
+                "warnings": [],
+                "datasets": {},
+            },
+            "files": [],
+            "duration_seconds": 0.01,
+        }
+
+    with (
+        patch.object(pipeline_module, "upload_processed_files", fake_upload),
+        patch.object(
+            pipeline_module,
+            "process_bronze_to_silver",
+            fake_silver_processing,
+        ),
+    ):
         yield
 
 
@@ -54,6 +101,7 @@ def successful_pipeline(
         seed=50,
         raw_dir=directory / "raw",
         processed_dir=directory / "processed",
+        silver_staging_dir=directory / "silver_staging",
     )
 
 
@@ -68,6 +116,7 @@ def _run_in_directory(
         seed=seed,
         raw_dir=directory / "raw",
         processed_dir=directory / "processed",
+        silver_staging_dir=directory / "silver_staging",
     )
 
 
@@ -117,6 +166,7 @@ def test_validation_runs_before_processing(
     original_validation = pipeline_module.validate_raw_data
     original_processing = pipeline_module.process_raw_to_parquet
     original_upload = pipeline_module.upload_processed_files
+    original_silver_processing = pipeline_module.process_bronze_to_silver
 
     def tracked_validation(**paths: Path | str) -> dict[str, object]:
         call_order.append("validation")
@@ -126,16 +176,25 @@ def test_validation_runs_before_processing(
         call_order.append("processing")
         return original_processing(**paths)
 
-    def tracked_upload(**options: Path | str) -> dict[str, object]:
+    def tracked_upload(**options: object) -> dict[str, object]:
         call_order.append("upload")
         return original_upload(**options)
+
+    def tracked_silver_processing(**options: object) -> dict[str, object]:
+        call_order.append("silver")
+        return original_silver_processing(**options)
 
     monkeypatch.setattr(pipeline_module, "validate_raw_data", tracked_validation)
     monkeypatch.setattr(pipeline_module, "process_raw_to_parquet", tracked_processing)
     monkeypatch.setattr(pipeline_module, "upload_processed_files", tracked_upload)
+    monkeypatch.setattr(
+        pipeline_module,
+        "process_bronze_to_silver",
+        tracked_silver_processing,
+    )
     _run_in_directory(tmp_path)
 
-    assert call_order == ["validation", "processing", "upload"]
+    assert call_order == ["validation", "processing", "upload", "silver"]
 
 
 def test_pipeline_report_has_expected_structure(
@@ -148,6 +207,7 @@ def test_pipeline_report_has_expected_structure(
         "rows",
         "validation",
         "s3",
+        "silver",
     ]
     assert list(successful_pipeline["rows"]) == [
         "products",
@@ -162,7 +222,63 @@ def test_pipeline_report_has_expected_structure(
     ]
     assert successful_pipeline["s3"]["bucket"] == "test-bucket"
     assert successful_pipeline["s3"]["uploaded_count"] == 4
-    assert successful_pipeline["s3"]["partition"] == "year=2026/month=01/day=02"
+    assert successful_pipeline["s3"]["partition"] == successful_pipeline["silver"][
+        "partition"
+    ]
+    assert successful_pipeline["silver"]["uploaded_count"] == 4
+
+
+def test_bronze_and_silver_receive_same_fixed_execution_date(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixed_date = datetime(2026, 2, 3, 10, 30, tzinfo=timezone.utc)
+    received_dates: list[datetime] = []
+    partition = "year=2026/month=02/day=03"
+
+    def fake_upload(
+        processed_dir: Path | str,
+        execution_date: datetime,
+    ) -> dict[str, object]:
+        received_dates.append(execution_date)
+        return {
+            "execution_date": execution_date.isoformat(),
+            "partition": partition,
+            "uploaded_count": 4,
+            "bucket": "test-bucket",
+            "files": [],
+        }
+
+    def fake_silver(
+        execution_date: datetime,
+        bucket_name: str,
+        staging_dir: Path | str,
+    ) -> dict[str, object]:
+        received_dates.append(execution_date)
+        return {
+            "success": True,
+            "execution_date": execution_date.isoformat(),
+            "partition": partition,
+            "bucket": bucket_name,
+            "uploaded_count": 4,
+        }
+
+    monkeypatch.setattr(pipeline_module, "upload_processed_files", fake_upload)
+    monkeypatch.setattr(pipeline_module, "process_bronze_to_silver", fake_silver)
+
+    report = run_pipeline(
+        products_quantity=10,
+        customers_quantity=15,
+        orders_quantity=25,
+        seed=42,
+        raw_dir=tmp_path / "raw",
+        processed_dir=tmp_path / "processed",
+        silver_staging_dir=tmp_path / "silver_staging",
+        execution_date=fixed_date,
+    )
+
+    assert received_dates == [fixed_date, fixed_date]
+    assert report["s3"]["partition"] == report["silver"]["partition"]
 
 
 def test_pipeline_is_deterministic(tmp_path: Path) -> None:
@@ -252,6 +368,26 @@ def test_pipeline_stops_when_validation_fails(
     assert processing_called is False
 
 
+def test_pipeline_returns_context_when_silver_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_silver(**options: object) -> dict[str, object]:
+        raise ValueError("falha Silver simulada")
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "process_bronze_to_silver",
+        fail_silver,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="Falha na etapa processamento da camada Silver",
+    ):
+        _run_in_directory(tmp_path)
+
+
 def test_direct_execution_returns_zero_on_success(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -269,13 +405,22 @@ def test_direct_execution_returns_zero_on_success(
             "bucket": "test-bucket",
             "files": [],
         },
+        "silver": {
+            "execution_date": "2026-01-02T03:04:05+00:00",
+            "partition": "year=2026/month=01/day=02",
+            "uploaded_count": 4,
+            "bucket": "test-bucket",
+            "files": [],
+        },
     }
     monkeypatch.setattr(pipeline_module, "run_pipeline", lambda: report)
 
     assert pipeline_module.main() == 0
     output = capsys.readouterr().out
     assert "Pipeline concluído com sucesso" in output
-    assert "S3: 4 arquivo(s) enviado(s) para o bucket test-bucket" in output
+    assert "Bronze: 4 arquivo(s) enviado(s) para o bucket test-bucket" in output
+    assert "Silver: 4 arquivo(s) enviado(s) para o bucket test-bucket" in output
+    assert "Partição: year=2026/month=01/day=02" in output
 
 
 def test_direct_execution_returns_one_on_failure(

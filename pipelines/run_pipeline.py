@@ -1,10 +1,15 @@
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import TypeVar
 
 import pandas as pd
 
-from pipelines.loading.upload_to_s3 import upload_processed_files
+from pipelines.loading.upload_to_s3 import (
+    normalize_execution_date,
+    upload_processed_files,
+)
+from pipelines.processing.process_bronze_to_silver import process_bronze_to_silver
 from src.extraction.generate_customers import generate_customers
 from src.extraction.generate_orders import generate_orders
 from src.extraction.generate_products import generate_products
@@ -50,6 +55,8 @@ def run_pipeline(
     seed: int = 42,
     raw_dir: Path | str = "data/raw",
     processed_dir: Path | str = "data/processed",
+    silver_staging_dir: Path | str = "data/silver_staging",
+    execution_date: datetime | None = None,
 ) -> dict[str, object]:
     quantities = {
         "products_quantity": products_quantity,
@@ -60,6 +67,7 @@ def run_pipeline(
         if value <= 0:
             raise ValueError(f"{name} deve ser maior que zero")
 
+    utc_execution_date = normalize_execution_date(execution_date)
     raw_directory = Path(raw_dir)
     processed_directory = Path(processed_dir)
     products_path = raw_directory / "products.csv"
@@ -118,8 +126,19 @@ def run_pipeline(
         "upload para AWS S3 Bronze",
         lambda: upload_processed_files(
             processed_dir=processed_directory,
+            execution_date=utc_execution_date,
         ),
     )
+    silver_report = _run_stage(
+        "processamento da camada Silver",
+        lambda: process_bronze_to_silver(
+            execution_date=utc_execution_date,
+            bucket_name=upload_report["bucket"],
+            staging_dir=silver_staging_dir,
+        ),
+    )
+    if silver_report["partition"] != upload_report["partition"]:
+        raise RuntimeError("As camadas Bronze e Silver utilizaram partições diferentes")
 
     return {
         "success": True,
@@ -142,6 +161,7 @@ def run_pipeline(
             "warnings": validation_report["warnings"],
         },
         "s3": upload_report,
+        "silver": silver_report,
     }
 
 
@@ -156,9 +176,14 @@ def main() -> int:
     for name, rows in report["rows"].items():
         print(f"- {name}: {rows} linha(s)")
     print(
-        f"- S3: {report['s3']['uploaded_count']} arquivo(s) enviado(s) "
+        f"- Bronze: {report['s3']['uploaded_count']} arquivo(s) enviado(s) "
         f"para o bucket {report['s3']['bucket']}"
     )
+    print(
+        f"- Silver: {report['silver']['uploaded_count']} arquivo(s) enviado(s) "
+        f"para o bucket {report['silver']['bucket']}"
+    )
+    print(f"- Partição: {report['s3']['partition']}")
     return 0
 
 

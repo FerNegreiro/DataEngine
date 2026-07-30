@@ -26,7 +26,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def _as_utc(execution_date: datetime | None) -> datetime:
+def normalize_execution_date(execution_date: datetime | None = None) -> datetime:
     if execution_date is None:
         return datetime.now(timezone.utc)
     if execution_date.tzinfo is None:
@@ -34,19 +34,23 @@ def _as_utc(execution_date: datetime | None) -> datetime:
     return execution_date.astimezone(timezone.utc)
 
 
+def build_partition(execution_date: datetime | None = None) -> str:
+    utc_execution_date = normalize_execution_date(execution_date)
+    return (
+        f"year={utc_execution_date:%Y}/"
+        f"month={utc_execution_date:%m}/"
+        f"day={utc_execution_date:%d}"
+    )
+
+
 def build_partitioned_key(
     dataset_name: str,
     filename: str,
     execution_date: datetime | None = None,
+    layer: str = "bronze",
 ) -> str:
-    utc_execution_date = _as_utc(execution_date)
-    return (
-        f"bronze/{dataset_name}/"
-        f"year={utc_execution_date:%Y}/"
-        f"month={utc_execution_date:%m}/"
-        f"day={utc_execution_date:%d}/"
-        f"{filename}"
-    )
+    partition = build_partition(execution_date)
+    return f"{layer}/{dataset_name}/{partition}/{filename}"
 
 
 def upload_file(
@@ -89,12 +93,8 @@ def upload_processed_files(
     execution_date: datetime | None = None,
 ) -> dict[str, object]:
     processed_directory = Path(processed_dir)
-    utc_execution_date = _as_utc(execution_date)
-    partition = (
-        f"year={utc_execution_date:%Y}/"
-        f"month={utc_execution_date:%m}/"
-        f"day={utc_execution_date:%d}"
-    )
+    utc_execution_date = normalize_execution_date(execution_date)
+    partition = build_partition(utc_execution_date)
     s3_client = boto3.client("s3")
 
     uploaded_files: list[dict[str, str]] = []

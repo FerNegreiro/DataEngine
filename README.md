@@ -87,6 +87,26 @@ O processamento só começa após a validação dos dados brutos e grava os arqu
 compressão Snappy. O formato Parquet é adequado para pipelines por oferecer armazenamento
 colunar compacto, leitura eficiente e preservação explícita dos tipos de dados.
 
+## Camadas Bronze e Silver no AWS S3
+
+O pipeline envia os Parquets processados para a camada Bronze e usa a mesma data UTC para
+ler, padronizar, validar e publicar os quatro datasets na camada Silver:
+
+```bash
+python -m pipelines.run_pipeline
+```
+
+As duas camadas são particionadas pela data da execução:
+
+```text
+bronze/{dataset}/year={YYYY}/month={MM}/day={DD}/{filename}
+silver/{dataset}/year={YYYY}/month={MM}/day={DD}/{filename}
+```
+
+A Bronze preserva os dados processados de origem. A Silver normaliza textos, datas, tipos,
+valores monetários e ordenação, valida schemas e relacionamentos e só é enviada ao S3 quando
+não há erros. O bucket configurado é `dataengine-fernando-2026`.
+
 ## Execução com Docker
 
 O container reproduzível executa o pipeline completo: gera produtos, clientes, pedidos e
@@ -104,5 +124,5 @@ docker compose run --rm dataengine
 ```
 
 Os volumes `./data/raw:/app/data/raw` e `./data/processed:/app/data/processed` preservam no
-host os quatro CSVs brutos e os quatro Parquets gerados pelo container. Nesta etapa ainda
-não há integração com AWS, BigQuery ou Airflow.
+host os quatro CSVs brutos e os quatro Parquets gerados pelo container. A execução do fluxo
+completo requer credenciais AWS disponíveis para o SDK do Python.
