@@ -183,6 +183,31 @@ dbt docs generate
 A documentação é gerada localmente em `target/`. Nenhuma publicação ou hospedagem é feita
 por esse fluxo.
 
+## Previsão de demanda e risco de estoque
+
+O pipeline de Machine Learning consulta somente os marts `fct_sales` e `dim_products`, cria
+uma grade diária completa por produto e treina um modelo global de demanda com validação
+temporal expanding window. Dias sem venda são mantidos com quantidade zero. O modelo nunca
+usa split aleatório nem inclui estoque atual nas features históricas.
+
+```bash
+python -m pipelines.machine_learning.run_ml_pipeline
+```
+
+Por padrão, são previstos 14 dias para produtos ativos. Também é possível gerar horizontes
+de 7 ou 30 dias e escolher outro diretório de artefatos:
+
+```bash
+python -m pipelines.machine_learning.run_ml_pipeline \
+  --forecast-horizon 30 \
+  --artifacts-dir artifacts/ml
+```
+
+Para uma execução local sem BigQuery, coloque `fct_sales.parquet` e `dim_products.parquet`
+em `data/ml_staging` e use `--skip-bigquery`. A execução salva modelo, metadados, métricas,
+features, previsões e classificação de risco em `artifacts/ml`. Esse fluxo não cria datasets,
+não grava tabelas no BigQuery e não altera o pipeline de engenharia existente.
+
 ## Execução com Docker
 
 O container reproduzível executa o pipeline completo: gera produtos, clientes, pedidos e

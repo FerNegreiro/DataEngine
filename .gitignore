@@ -16,5 +16,7 @@ __pycache__/
 data/raw/*
 data/processed/*
 data/silver_staging/
+data/ml_staging/
+artifacts/ml/
 !data/raw/.gitkeep
 !data/processed/.gitkeep
