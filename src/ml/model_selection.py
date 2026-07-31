@@ -9,6 +9,7 @@ import pandas as pd
 
 from src.ml.baselines import BASELINE_PREDICTORS
 from src.ml.config import (
+    CHAMPION_MODEL,
     FORECAST_HORIZONS,
     MODEL_NAME,
     MODEL_VERSION,
@@ -38,8 +39,6 @@ from src.ml.temporal_split import (
     build_final_test_fold,
 )
 from src.ml.train import train_forecasting_model
-
-CHAMPION_MODEL = "moving_average_28"
 
 
 @dataclass

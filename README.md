@@ -252,6 +252,55 @@ Os resultados ficam em `artifacts/ml/experiments/iteration_02`, incluindo métri
 por produto e segmento, classificação ADI/CV², decisão de promoção, previsões, comparação de
 risco e modelos locais aplicáveis. Todo esse diretório permanece ignorado pelo Git.
 
+### Publicação produtiva no BigQuery
+
+O champion produtivo permanece `moving_average_28`, versão `1.0.0`. O Croston-SBA, o
+HistGradientBoosting Poisson e os dois modelos hurdle permanecem rejeitados; a etapa de
+publicação não reavalia nem altera essa decisão. As previsões oficiais são produzidas para 7,
+14 e 30 dias, enquanto o risco de estoque usa o horizonte principal de 14 dias.
+
+O modo local continua sendo o padrão e não grava no BigQuery:
+
+```bash
+python -m pipelines.machine_learning.run_ml_pipeline
+```
+
+A publicação explícita executa a previsão do champion, valida o pacote, cria ou valida o
+dataset `dataengine_ml`, publica as tabelas e confere as contagens por `run_id`:
+
+```bash
+python -m pipelines.machine_learning.run_ml_pipeline --publish-bigquery
+```
+
+O pacote local completo fica em `artifacts/ml/production`, ignorado pelo Git. Ele pode ser
+reenviado sem recalcular as previsões somente quando estiver completo, mantiver o champion
+aprovado e contiver a decisão oficial da segunda iteração:
+
+```bash
+python -m pipelines.machine_learning.publish_ml_results
+```
+
+As cinco tabelas históricas usam o projeto `dataengine-fernando-2026`, a região
+`southamerica-east1` e o dataset `dataengine_ml`:
+
+- `sales_forecast`: previsões diárias oficiais do champion por execução e horizonte;
+- `inventory_risk`: risco por produto no horizonte de 14 dias;
+- `model_metrics`: métricas do champion e histórico dos challengers rejeitados;
+- `model_registry`: uma linha por nome e versão avaliada, com exatamente um champion ativo;
+- `pipeline_runs`: estado, contagens, duração e erro de cada execução.
+
+A carga é idempotente. Cada dataframe passa por uma tabela staging efêmera e depois por
+`MERGE` na tabela histórica. O `WRITE_TRUNCATE` é usado somente nessa staging descartável;
+nenhum run anterior é apagado. Previsões e riscos usam chaves que incluem `run_id`, métricas
+usam a chave composta de execução, modelo, horizonte, período e métrica, e o registry usa
+`model_name + model_version`. O mesmo pacote conserva o mesmo `run_id` determinístico.
+
+A autenticação usa Application Default Credentials (ADC). Nenhum arquivo de credencial é
+armazenado no projeto. A publicação interrompe antes da carga se encontrar previsão negativa,
+duplicidade, horizonte incompleto, risco inválido, metadados incompatíveis ou um challenger nas
+previsões oficiais. Depois do `MERGE`, as contagens, os horizontes, o champion e o registro em
+`pipeline_runs` são consultados novamente no BigQuery.
+
 ## Execução com Docker
 
 O container reproduzível executa o pipeline completo: gera produtos, clientes, pedidos e

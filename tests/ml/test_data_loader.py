@@ -56,6 +56,7 @@ def _rows() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     products = [
         {
             "product_id": "P1",
+            "product_name": "Product 1",
             "category": "cat-a",
             "brand": "brand-a",
             "unit_price": 20,

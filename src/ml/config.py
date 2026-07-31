@@ -5,15 +5,22 @@ from pathlib import Path
 
 GCP_PROJECT_ID = "dataengine-fernando-2026"
 DBT_DATASET_ID = "dataengine_dbt"
+ML_DATASET_ID = "dataengine_ml"
 BIGQUERY_LOCATION = "southamerica-east1"
 
 PRIMARY_FORECAST_HORIZON = 14
 FORECAST_HORIZONS = (7, 14, 30)
 RANDOM_STATE = 42
 
+CHAMPION_MODEL = "moving_average_28"
+CHAMPION_MODEL_VERSION = "1.0.0"
+CHAMPION_STATUS = "champion"
+REJECTED_CHALLENGER_STATUS = "challenger_rejected"
+
 ARTIFACTS_DIR = Path("artifacts/ml")
 ML_STAGING_DIR = Path("data/ml_staging")
 EXPERIMENTS_DIR = ARTIFACTS_DIR / "experiments"
+PRODUCTION_ARTIFACTS_DIR = ARTIFACTS_DIR / "production"
 
 EXPECTED_DATA_START_DATE = date(2023, 1, 6)
 INITIAL_TRAIN_END_DATE = date(2026, 3, 30)
@@ -99,6 +106,7 @@ DEFAULT_TSB_BETA = 0.1
 
 HURDLE_NAME_PREFIX = "hurdle"
 HURDLE_VERSION = "2.0.0"
+INTERMITTENT_MODEL_VERSION = "2.0.0"
 DEFAULT_HURDLE_CLASSIFIER_PARAMETERS = {
     "learning_rate": 0.08,
     "max_iter": 80,

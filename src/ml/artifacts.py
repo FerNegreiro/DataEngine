@@ -49,6 +49,19 @@ class ExperimentArtifactPaths:
         return payload
 
 
+@dataclass(frozen=True)
+class ProductionArtifactPaths:
+    manifest: Path
+    forecasts: Path
+    inventory_risk: Path
+    model_metrics: Path
+    model_registry: Path
+    pipeline_run: Path
+
+    def to_dict(self) -> dict[str, str]:
+        return {name: str(path) for name, path in asdict(self).items()}
+
+
 def _json_default(value: Any) -> Any:
     if isinstance(value, (date, datetime, pd.Timestamp)):
         return value.isoformat()
@@ -158,4 +171,33 @@ def save_experiment_artifacts(
     )
     for name, model in models.items():
         joblib.dump(model, model_paths[name])
+    return paths
+
+
+def save_production_artifacts(
+    *,
+    manifest: dict[str, Any],
+    forecasts: pd.DataFrame,
+    inventory_risk: pd.DataFrame,
+    model_metrics: pd.DataFrame,
+    model_registry: pd.DataFrame,
+    pipeline_run: dict[str, Any],
+    artifacts_dir: Path | str,
+) -> ProductionArtifactPaths:
+    directory = Path(artifacts_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    paths = ProductionArtifactPaths(
+        manifest=directory / "publication_manifest.json",
+        forecasts=directory / "sales_forecast.parquet",
+        inventory_risk=directory / "inventory_risk.parquet",
+        model_metrics=directory / "model_metrics.parquet",
+        model_registry=directory / "model_registry.parquet",
+        pipeline_run=directory / "pipeline_run.json",
+    )
+    _write_json(paths.manifest, manifest)
+    _write_json(paths.pipeline_run, pipeline_run)
+    forecasts.to_parquet(paths.forecasts, index=False)
+    inventory_risk.to_parquet(paths.inventory_risk, index=False)
+    model_metrics.to_parquet(paths.model_metrics, index=False)
+    model_registry.to_parquet(paths.model_registry, index=False)
     return paths

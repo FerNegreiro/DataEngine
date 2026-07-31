@@ -24,6 +24,7 @@ from src.ml.config import (
 SALES_COLUMNS = ("product_id", "date", "quantity_sold", "revenue")
 PRODUCT_COLUMNS = (
     "product_id",
+    "product_name",
     "category",
     "brand",
     "unit_price",
@@ -167,6 +168,7 @@ def load_analytical_data(
     products_query = f"""
         SELECT
             product_id,
+            product_name,
             category,
             brand,
             unit_price,

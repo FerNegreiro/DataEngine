@@ -6,7 +6,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from pipelines.machine_learning.run_ml_pipeline import run_ml_pipeline
+from pipelines.machine_learning import run_ml_pipeline as pipeline_module
+from pipelines.machine_learning.run_ml_pipeline import _parse_args, run_ml_pipeline
 
 
 def test_pipeline_rejects_unsupported_forecast_horizon() -> None:
@@ -77,3 +78,57 @@ def test_iteration_02_runs_end_to_end_without_bigquery(
         comparison["product_win_count_method"]
         == "tie_inclusive_minimum_valid_product_wape"
     )
+
+
+def test_cli_keeps_local_mode_and_exposes_explicit_publication_mode() -> None:
+    assert _parse_args([]).publish_bigquery is False
+    assert _parse_args(["--publish-bigquery"]).publish_bigquery is True
+    with pytest.raises(SystemExit):
+        _parse_args(["--publish-bigquery", "--experiment", "iteration_02"])
+
+
+def test_publish_mode_builds_only_official_champion_and_calls_publisher(
+    ml_products: pd.DataFrame,
+    approved_experiment_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dates = list(pd.date_range("2023-01-06", "2026-07-28", freq="30D"))
+    if dates[-1] != pd.Timestamp("2026-07-28"):
+        dates.append(pd.Timestamp("2026-07-28"))
+    sales = pd.DataFrame(
+        [
+            {
+                "product_id": product_id,
+                "date": current_date,
+                "quantity_sold": quantity,
+                "revenue": quantity * 20,
+            }
+            for current_date in dates
+            for product_id, quantity in (("P1", 2.0), ("P2", 1.0))
+        ]
+    )
+
+    def fake_publish(bundle: object, **_: object) -> dict[str, object]:
+        assert bundle.forecasts["model_name"].unique().tolist() == [
+            "moving_average_28"
+        ]
+        return {
+            "run_id": bundle.manifest["run_id"],
+            "champion_model": "moving_average_28",
+            "champion_version": "1.0.0",
+        }
+
+    monkeypatch.setattr(pipeline_module, "publish_ml_results", fake_publish)
+    result = run_ml_pipeline(
+        sales=sales,
+        products=ml_products,
+        publish_bigquery=True,
+        production_artifacts_dir=tmp_path / "production",
+        approved_experiment_dir=approved_experiment_dir,
+    )
+    assert result["bigquery_write_performed"] is True
+    assert result["forecast_horizons"] == [7, 14, 30]
+    assert result["forecast_rows"] == 51
+    assert result["risk_rows"] == 1
+    assert result["registry_rows"] == 5

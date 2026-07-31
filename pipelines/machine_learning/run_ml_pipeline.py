@@ -11,13 +11,19 @@ import numpy as np
 import pandas as pd
 import sklearn
 
-from src.ml.artifacts import save_experiment_artifacts, save_ml_artifacts
+from pipelines.machine_learning.publish_ml_results import publish_ml_results
+from src.ml.artifacts import (
+    save_experiment_artifacts,
+    save_ml_artifacts,
+    save_production_artifacts,
+)
 from src.ml.config import (
     ARTIFACTS_DIR,
     BIGQUERY_LOCATION,
     DBT_DATASET_ID,
     DEFAULT_MODEL_PARAMETERS,
     EXPECTED_DATA_START_DATE,
+    EXPERIMENTS_DIR,
     FINAL_TEST_END_DATE,
     FORECAST_HORIZONS,
     GCP_PROJECT_ID,
@@ -26,6 +32,7 @@ from src.ml.config import (
     MODEL_NAME,
     MODEL_VERSION,
     PRIMARY_FORECAST_HORIZON,
+    PRODUCTION_ARTIFACTS_DIR,
 )
 from src.ml.data_loader import AnalyticalData, load_analytical_data, load_local_analytical_data
 from src.ml.evaluate import (
@@ -36,6 +43,7 @@ from src.ml.feature_engineering import add_temporal_features, build_product_day_
 from src.ml.inventory_risk import classify_inventory_risk
 from src.ml.model_selection import evaluate_iteration_02
 from src.ml.predict import model_predictor, recursive_forecast
+from src.ml.production import build_production_bundle
 from src.ml.temporal_split import (
     build_expanding_window_folds,
     build_final_test_fold,
@@ -79,11 +87,16 @@ def run_ml_pipeline(
     experiment: str | None = None,
     hurdle_classifier_parameters: Mapping[str, Any] | None = None,
     hurdle_regressor_parameters: Mapping[str, Any] | None = None,
+    publish_bigquery: bool = False,
+    production_artifacts_dir: Path | str = PRODUCTION_ARTIFACTS_DIR,
+    approved_experiment_dir: Path | str = EXPERIMENTS_DIR / "iteration_02",
 ) -> dict[str, Any]:
     if forecast_horizon not in FORECAST_HORIZONS:
         raise ValueError(f"forecast_horizon deve ser um de {FORECAST_HORIZONS}")
     if experiment is not None and experiment != "iteration_02":
         raise ValueError("experiment deve ser iteration_02")
+    if publish_bigquery and experiment is not None:
+        raise ValueError("--publish-bigquery não pode publicar uma execução experimental")
     analytical_data, source_mode = _load_inputs(
         sales=sales,
         products=products,
@@ -98,17 +111,54 @@ def run_ml_pipeline(
             f"fonte={source_dates.min()}..{source_dates.max()}, "
             f"obrigatório={EXPECTED_DATA_START_DATE}..{FINAL_TEST_END_DATE}"
         )
+    grid_end_date = source_dates.max() if publish_bigquery else FINAL_TEST_END_DATE
     grid = build_product_day_grid(
         analytical_data.sales,
         analytical_data.products,
         start_date=EXPECTED_DATA_START_DATE,
-        end_date=FINAL_TEST_END_DATE,
+        end_date=grid_end_date,
     )
     validate_required_date_range(
         grid,
         required_start=EXPECTED_DATA_START_DATE,
         required_end=FINAL_TEST_END_DATE,
     )
+
+    if publish_bigquery:
+        bundle = build_production_bundle(
+            grid,
+            analytical_data.products,
+            experiment_dir=approved_experiment_dir,
+        )
+        production_paths = save_production_artifacts(
+            manifest=bundle.manifest,
+            forecasts=bundle.forecasts,
+            inventory_risk=bundle.inventory_risk,
+            model_metrics=bundle.model_metrics,
+            model_registry=bundle.model_registry,
+            pipeline_run=bundle.pipeline_run,
+            artifacts_dir=production_artifacts_dir,
+        )
+        publication = publish_ml_results(
+            bundle,
+            artifacts_dir=production_artifacts_dir,
+            bigquery_client=bigquery_client,
+        )
+        return {
+            "publish_bigquery": True,
+            "run_id": publication["run_id"],
+            "champion_model": publication["champion_model"],
+            "champion_version": publication["champion_version"],
+            "forecast_horizons": list(FORECAST_HORIZONS),
+            "forecast_rows": int(len(bundle.forecasts)),
+            "risk_rows": int(len(bundle.inventory_risk)),
+            "metric_rows": int(len(bundle.model_metrics)),
+            "registry_rows": int(len(bundle.model_registry)),
+            "active_product_count": int(bundle.manifest["products_processed"]),
+            "artifact_paths": production_paths.to_dict(),
+            "publication": publication,
+            "bigquery_write_performed": True,
+        }
 
     if experiment is not None:
         experiment_result = evaluate_iteration_02(
@@ -283,7 +333,7 @@ def run_ml_pipeline(
     }
 
 
-def _parse_args() -> argparse.Namespace:
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Treina previsão de demanda e classifica risco de estoque."
     )
@@ -300,24 +350,34 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--artifacts-dir", type=Path, default=ARTIFACTS_DIR)
     parser.add_argument("--staging-dir", type=Path, default=ML_STAGING_DIR)
-    parser.add_argument(
+    publication_mode = parser.add_mutually_exclusive_group()
+    publication_mode.add_argument(
         "--experiment",
         choices=("iteration_02",),
         help="Executa uma iteração experimental sem substituir os artefatos anteriores.",
     )
-    return parser.parse_args()
+    publication_mode.add_argument(
+        "--publish-bigquery",
+        action="store_true",
+        help=(
+            "Publica somente o champion moving_average_28 no dataset dataengine_ml, "
+            "com MERGE idempotente."
+        ),
+    )
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    arguments = _parse_args()
+def main(argv: list[str] | None = None) -> None:
+    arguments = _parse_args(argv)
     result = run_ml_pipeline(
         skip_bigquery=arguments.skip_bigquery,
         forecast_horizon=arguments.forecast_horizon,
         artifacts_dir=arguments.artifacts_dir,
         staging_dir=arguments.staging_dir,
         experiment=arguments.experiment,
+        publish_bigquery=arguments.publish_bigquery,
     )
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
 
 
 if __name__ == "__main__":
