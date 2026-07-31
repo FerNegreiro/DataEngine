@@ -9,6 +9,10 @@ __pycache__/
 .pytest_tmp/
 .ruff_cache/
 .vscode/
+**/profiles.yml
+**/target/
+**/logs/
+**/dbt_packages/
 data/raw/*
 data/processed/*
 data/silver_staging/

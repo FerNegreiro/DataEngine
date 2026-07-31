@@ -1,0 +1,394 @@
+version: 2
+
+models:
+  - name: dim_customers
+    description: >
+      Dimensão atual de clientes. Contém atributos cadastrais sem métricas de
+      pedidos e mantém exatamente uma linha por customer_id.
+    config:
+      tags: ["dimension"]
+      meta:
+        grain: uma linha por customer_id
+    columns:
+      - name: customer_id
+        description: Chave natural e primária da dimensão.
+        data_tests:
+          - unique
+          - not_null
+      - name: full_name
+        description: Nome completo do cliente.
+        data_tests:
+          - not_null
+      - name: email
+        description: E-mail normalizado.
+        data_tests:
+          - unique
+          - not_null
+      - name: city
+        description: Cidade atual do cliente.
+        data_tests:
+          - not_null
+      - name: state
+        description: Unidade federativa atual.
+        data_tests:
+          - not_null
+      - name: region
+        description: Região brasileira atual.
+        data_tests:
+          - not_null
+      - name: registration_date
+        description: Data de cadastro.
+        data_tests:
+          - not_null
+      - name: customer_segment
+        description: Segmento operacional atual.
+        data_tests:
+          - not_null
+      - name: is_active
+        description: Indicador de cadastro ativo.
+        data_tests:
+          - not_null
+
+  - name: dim_products
+    description: >
+      Dimensão atual de produtos, com atributos de catálogo, preço e estoque.
+      Mantém exatamente uma linha por product_id.
+    config:
+      tags: ["dimension"]
+      meta:
+        grain: uma linha por product_id
+    columns:
+      - name: product_id
+        description: Chave natural e primária da dimensão.
+        data_tests:
+          - unique
+          - not_null
+      - name: product_name
+        description: Nome comercial atual.
+        data_tests:
+          - not_null
+      - name: category
+        description: Categoria comercial atual.
+        data_tests:
+          - not_null
+      - name: unit_price
+        description: Preço atual de catálogo.
+        data_tests:
+          - not_null
+      - name: unit_cost
+        description: Custo atual de catálogo.
+        data_tests:
+          - not_null
+      - name: stock_quantity
+        description: Quantidade atual em estoque.
+        data_tests:
+          - not_null
+      - name: minimum_stock
+        description: Estoque mínimo operacional.
+        data_tests:
+          - not_null
+      - name: is_active
+        description: Indicador de produto ativo.
+        data_tests:
+          - not_null
+      - name: stock_status
+        description: >
+          Classificação simples do estoque atual: abaixo ou igual ao mínimo,
+          ou adequado.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["adequate", "below_minimum"]
+
+  - name: fct_sales
+    description: >
+      Fact transacional com uma linha por item de pedido. Preserva cancelamentos
+      e sinaliza vendas realizadas. Frete, desconto e total do pedido são repetidos
+      para contexto e não devem ser somados na granularidade de item.
+    config:
+      tags: ["fact"]
+      meta:
+        grain: uma linha por order_item_id
+    columns:
+      - name: order_item_id
+        description: Chave primária da fact.
+        data_tests:
+          - unique
+          - not_null
+      - name: order_id
+        description: Pedido ao qual o item pertence.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_orders')
+                field: order_id
+      - name: customer_id
+        description: Cliente do pedido.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+      - name: product_id
+        description: Produto vendido.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_products')
+                field: product_id
+      - name: order_date
+        description: Data e hora do pedido.
+        data_tests:
+          - not_null
+      - name: order_status
+        description: Status do pedido.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Cancelado", "Entregue", "Enviado", "Processando"]
+      - name: is_realized_sale
+        description: Verdadeiro quando o pedido não está cancelado.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [true, false]
+                quote: false
+      - name: quantity
+        description: Quantidade vendida no item.
+        data_tests:
+          - not_null
+      - name: line_gross_amount
+        description: Valor bruto do item antes do desconto percentual.
+        data_tests:
+          - not_null
+      - name: line_discount_amount
+        description: Desconto monetário do item.
+        data_tests:
+          - not_null
+      - name: item_total
+        description: Receita líquida do item antes do desconto adicional do pedido.
+        data_tests:
+          - not_null
+      - name: line_cost_amount
+        description: Custo histórico total do item.
+        data_tests:
+          - not_null
+      - name: line_margin_before_order_discount
+        description: Margem do item antes do desconto adicional do pedido.
+        data_tests:
+          - not_null
+      - name: order_shipping_cost
+        description: >
+          Frete do pedido repetido em cada item apenas para contexto; campo não aditivo.
+        data_tests:
+          - not_null
+      - name: order_discount_amount
+        description: >
+          Desconto do pedido repetido em cada item apenas para contexto; campo não aditivo.
+        data_tests:
+          - not_null
+      - name: order_total
+        description: >
+          Total do pedido repetido em cada item apenas para contexto; campo não aditivo.
+        data_tests:
+          - not_null
+
+  - name: mart_daily_sales
+    description: >
+      Métricas diárias de vendas não canceladas. Valores de pedido são agregados
+      a partir de uma linha por pedido, evitando duplicação por itens.
+    config:
+      tags: ["sales_mart"]
+      meta:
+        grain: uma linha por sales_date
+    columns:
+      - name: sales_date
+        description: Data da venda.
+        data_tests:
+          - unique
+          - not_null
+      - name: total_orders
+        description: Quantidade de pedidos não cancelados.
+        data_tests:
+          - not_null
+      - name: unique_customers
+        description: Clientes distintos com pedidos não cancelados.
+        data_tests:
+          - not_null
+      - name: total_items_sold
+        description: Unidades vendidas em pedidos não cancelados.
+        data_tests:
+          - not_null
+      - name: distinct_products
+        description: Produtos distintos vendidos no dia.
+        data_tests:
+          - not_null
+      - name: gross_revenue
+        description: Receita bruta dos itens antes de qualquer desconto.
+        data_tests:
+          - not_null
+      - name: item_discount_amount
+        description: Descontos aplicados diretamente aos itens.
+        data_tests:
+          - not_null
+      - name: order_discount_amount
+        description: Descontos adicionais aplicados aos pedidos.
+        data_tests:
+          - not_null
+      - name: total_discount_amount
+        description: Soma de descontos dos itens e dos pedidos.
+        data_tests:
+          - not_null
+      - name: item_revenue_before_order_discount
+        description: Receita dos itens após desconto de item e antes do desconto do pedido.
+        data_tests:
+          - not_null
+      - name: shipping_amount
+        description: Frete total cobrado nos pedidos.
+        data_tests:
+          - not_null
+      - name: total_revenue
+        description: Soma do valor final dos pedidos não cancelados.
+        data_tests:
+          - not_null
+      - name: average_order_value
+        description: Ticket médio dos pedidos não cancelados.
+        data_tests:
+          - not_null
+
+  - name: mart_product_performance
+    description: >
+      Desempenho por produto em pedidos não cancelados. Receita e margem não
+      recebem rateio de desconto do pedido ou frete. O risco de estoque compara
+      o estoque atual com o mínimo e com as unidades vendidas nos 30 dias terminados
+      na maior data de pedido disponível.
+    config:
+      tags: ["product_mart"]
+      meta:
+        grain: uma linha por product_id
+    columns:
+      - name: product_id
+        description: Chave do produto.
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_products')
+                field: product_id
+      - name: product_name
+        description: Nome atual do produto.
+        data_tests:
+          - not_null
+      - name: category
+        description: Categoria atual do produto.
+        data_tests:
+          - not_null
+      - name: total_orders
+        description: Pedidos não cancelados que contêm o produto.
+        data_tests:
+          - not_null
+      - name: total_items_sold
+        description: Unidades vendidas em pedidos não cancelados.
+        data_tests:
+          - not_null
+      - name: unique_customers
+        description: Clientes distintos que compraram o produto.
+        data_tests:
+          - not_null
+      - name: item_revenue_before_order_discount
+        description: Receita dos itens antes de descontos adicionais do pedido.
+        data_tests:
+          - not_null
+      - name: current_stock_quantity
+        description: Estoque atual do produto.
+        data_tests:
+          - not_null
+      - name: items_sold_last_30_days
+        description: >
+          Unidades vendidas nos 30 dias terminados em sales_reference_date.
+        data_tests:
+          - not_null
+      - name: sales_reference_date
+        description: Maior data de pedido não cancelado usada como referência temporal.
+        data_tests:
+          - not_null
+      - name: stock_risk_status
+        description: >
+          below_minimum quando estoque atual não supera o mínimo; at_risk quando
+          as vendas dos últimos 30 dias alcançam o estoque; adequate nos demais casos.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["adequate", "at_risk", "below_minimum"]
+
+  - name: mart_customer_metrics
+    description: >
+      Métricas por cliente calculadas somente com pedidos não cancelados. A recência
+      usa a maior data de pedido disponível, evitando dependência de CURRENT_DATE.
+      Clientes sem compras permanecem na tabela com métricas zeradas.
+    config:
+      tags: ["customer_mart"]
+      meta:
+        grain: uma linha por customer_id
+    columns:
+      - name: customer_id
+        description: Chave do cliente.
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+      - name: full_name
+        description: Nome completo do cliente.
+        data_tests:
+          - not_null
+      - name: city
+        description: Cidade atual do cliente.
+        data_tests:
+          - not_null
+      - name: state
+        description: Unidade federativa atual.
+        data_tests:
+          - not_null
+      - name: region
+        description: Região brasileira atual.
+        data_tests:
+          - not_null
+      - name: total_orders
+        description: Quantidade de pedidos não cancelados.
+        data_tests:
+          - not_null
+      - name: total_items_purchased
+        description: Unidades compradas em pedidos não cancelados.
+        data_tests:
+          - not_null
+      - name: total_spend
+        description: Soma do valor final dos pedidos não cancelados.
+        data_tests:
+          - not_null
+      - name: average_order_value
+        description: Ticket médio dos pedidos não cancelados.
+        data_tests:
+          - not_null
+      - name: first_purchase_date
+        description: Primeira data de compra não cancelada; nula para clientes sem compras.
+      - name: last_purchase_date
+        description: Última data de compra não cancelada; nula para clientes sem compras.
+      - name: days_since_last_purchase
+        description: >
+          Dias entre a última compra e a maior data de pedido disponível; nulo
+          para clientes sem compras.
+      - name: sales_reference_date
+        description: Maior data de pedido não cancelado usada como referência temporal.
+        data_tests:
+          - not_null

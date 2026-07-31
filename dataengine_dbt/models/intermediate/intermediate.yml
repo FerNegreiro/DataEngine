@@ -1,0 +1,130 @@
+version: 2
+
+models:
+  - name: int_order_items_enriched
+    description: >
+      Itens de pedido enriquecidos com atributos do produto e medidas derivadas.
+      A margem é anterior ao desconto adicional do pedido porque esse desconto não
+      possui regra de alocação entre itens.
+    config:
+      meta:
+        grain: uma linha por order_item_id
+    columns:
+      - name: order_item_id
+        description: Chave do item de pedido.
+        data_tests:
+          - unique
+          - not_null
+      - name: order_id
+        description: Pedido do item.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_orders')
+                field: order_id
+      - name: product_id
+        description: Produto do item.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_products')
+                field: product_id
+      - name: product_name
+        description: Nome atual do produto.
+        data_tests:
+          - not_null
+      - name: category
+        description: Categoria atual do produto.
+        data_tests:
+          - not_null
+      - name: quantity
+        description: Quantidade de unidades.
+        data_tests:
+          - not_null
+      - name: line_gross_amount
+        description: Quantidade multiplicada pelo preço unitário, antes do desconto do item.
+        data_tests:
+          - not_null
+      - name: line_discount_amount
+        description: Desconto monetário aplicado diretamente ao item.
+        data_tests:
+          - not_null
+      - name: line_total
+        description: Valor líquido do item antes do desconto adicional do pedido.
+        data_tests:
+          - not_null
+      - name: line_cost_amount
+        description: Quantidade multiplicada pelo custo unitário histórico.
+        data_tests:
+          - not_null
+      - name: line_margin_before_order_discount
+        description: Valor líquido do item menos seu custo, antes do desconto do pedido.
+        data_tests:
+          - not_null
+
+  - name: int_orders_enriched
+    description: >
+      Pedidos enriquecidos com localização do cliente e agregação segura dos itens.
+      Mantém exatamente uma linha por order_id e separa descontos de item e de pedido.
+    config:
+      meta:
+        grain: uma linha por order_id
+    columns:
+      - name: order_id
+        description: Chave do pedido.
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_id
+        description: Cliente do pedido.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - name: order_date
+        description: Data e hora do pedido.
+        data_tests:
+          - not_null
+      - name: order_status
+        description: Status do pedido.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Cancelado", "Entregue", "Enviado", "Processando"]
+      - name: item_quantity
+        description: Soma das unidades dos itens do pedido.
+        data_tests:
+          - not_null
+      - name: distinct_products
+        description: Quantidade de produtos distintos do pedido.
+        data_tests:
+          - not_null
+      - name: gross_amount
+        description: Valor bruto dos itens antes de descontos.
+        data_tests:
+          - not_null
+      - name: item_discount_amount
+        description: Soma dos descontos aplicados diretamente aos itens.
+        data_tests:
+          - not_null
+      - name: shipping_cost
+        description: Frete cobrado no pedido.
+        data_tests:
+          - not_null
+      - name: order_discount_amount
+        description: Desconto adicional aplicado ao pedido.
+        data_tests:
+          - not_null
+      - name: total_discount_amount
+        description: Soma dos descontos de itens e do pedido.
+        data_tests:
+          - not_null
+      - name: order_total
+        description: Valor final do pedido.
+        data_tests:
+          - not_null

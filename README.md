@@ -139,6 +139,50 @@ A autenticação local usa Application Default Credentials (ADC), sem arquivos d
 no repositório. O projeto deve existir e o dataset deve estar disponível na região correta;
 caso o dataset não exista, o pipeline tenta criá-lo quando as permissões permitirem.
 
+## Modelagem analítica com dbt
+
+O projeto dbt em `dataengine_dbt` transforma as quatro tabelas Silver do BigQuery em modelos
+analíticos no dataset `dataengine_dbt`, preservando o lineage completo:
+
+```text
+dataengine-fernando-2026.dataengine
+  -> staging (views)
+  -> intermediate (views)
+  -> marts (tables)
+  -> testes e documentação
+```
+
+A autenticação local usa OAuth por meio do profile `dataengine_dbt` em `~/.dbt/profiles.yml`.
+Esse arquivo e as credenciais locais não pertencem ao repositório. O dataset de origem é
+`dataengine`, o dataset de destino é `dataengine_dbt` e ambos usam a região
+`southamerica-east1`.
+
+Os modelos estão organizados em:
+
+- `models/staging`: fontes declaradas e views `stg_` com seleção explícita de colunas;
+- `models/intermediate`: enriquecimento de itens e agregação segura de pedidos;
+- `models/marts`: dimensões de clientes e produtos, fact de vendas e marts diário, de
+  desempenho de produtos e de métricas de clientes.
+
+Os marts de vendas excluem pedidos cancelados das métricas, mas `fct_sales` preserva todos os
+itens e disponibiliza `is_realized_sale`. Frete e desconto do pedido não são rateados entre
+itens; os campos de pedido na fact são não aditivos. As métricas temporais usam a maior data
+de pedido disponível como referência, evitando resultados variáveis com `CURRENT_DATE`.
+
+Execute os comandos abaixo dentro de `dataengine_dbt`:
+
+```bash
+dbt debug
+dbt parse
+dbt compile
+dbt run
+dbt test
+dbt docs generate
+```
+
+A documentação é gerada localmente em `target/`. Nenhuma publicação ou hospedagem é feita
+por esse fluxo.
+
 ## Execução com Docker
 
 O container reproduzível executa o pipeline completo: gera produtos, clientes, pedidos e

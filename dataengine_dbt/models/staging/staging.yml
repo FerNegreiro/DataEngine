@@ -1,0 +1,255 @@
+version: 2
+
+models:
+  - name: stg_customers
+    description: >
+      Visão de staging dos clientes Silver. Preserva uma linha por customer_id
+      e os tipos recebidos do BigQuery, sem alterar regras de negócio.
+    config:
+      meta:
+        grain: uma linha por customer_id
+    columns:
+      - name: customer_id
+        description: Chave primária do cliente.
+        data_tests:
+          - unique
+          - not_null
+      - name: full_name
+        description: Nome completo do cliente.
+        data_tests:
+          - not_null
+      - name: email
+        description: E-mail normalizado do cliente.
+        data_tests:
+          - unique
+          - not_null
+      - name: birth_date
+        description: Data de nascimento.
+        data_tests:
+          - not_null
+      - name: gender
+        description: Gênero declarado.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Feminino", "Masculino", "Não informado"]
+      - name: city
+        description: Cidade do cliente.
+        data_tests:
+          - not_null
+      - name: state
+        description: Unidade federativa do cliente.
+        data_tests:
+          - not_null
+      - name: region
+        description: Região brasileira do cliente.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Centro-Oeste", "Nordeste", "Norte", "Sudeste", "Sul"]
+      - name: registration_date
+        description: Data de cadastro.
+        data_tests:
+          - not_null
+      - name: acquisition_channel
+        description: Canal de aquisição.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - Anúncios pagos
+                  - Busca orgânica
+                  - E-mail marketing
+                  - Indicação
+                  - Marketplace
+                  - Redes sociais
+      - name: customer_segment
+        description: Segmento operacional do cliente.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Inativo", "Novo", "Premium", "Recorrente"]
+      - name: is_active
+        description: Indicador de cadastro ativo.
+        data_tests:
+          - not_null
+
+  - name: stg_orders
+    description: >
+      Visão de staging dos pedidos Silver. Preserva uma linha por order_id,
+      incluindo pedidos cancelados, e mantém valores financeiros no nível do pedido.
+    config:
+      meta:
+        grain: uma linha por order_id
+    columns:
+      - name: order_id
+        description: Chave primária do pedido.
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_id
+        description: Cliente responsável pelo pedido.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - name: order_date
+        description: Data e hora do pedido.
+        data_tests:
+          - not_null
+      - name: order_status
+        description: Status operacional do pedido.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Cancelado", "Entregue", "Enviado", "Processando"]
+      - name: payment_method
+        description: Meio de pagamento.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Boleto", "Carteira digital", "Cartão de crédito", "Pix"]
+      - name: sales_channel
+        description: Canal de venda.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Aplicativo", "Marketplace", "Site"]
+      - name: shipping_cost
+        description: Frete cobrado no nível do pedido.
+        data_tests:
+          - not_null
+      - name: discount_amount
+        description: Desconto adicional no nível do pedido.
+        data_tests:
+          - not_null
+      - name: order_total
+        description: Valor final do pedido.
+        data_tests:
+          - not_null
+      - name: delivery_date
+        description: Data de entrega, quando aplicável.
+
+  - name: stg_order_items
+    description: >
+      Visão de staging dos itens Silver. Preserva uma linha por order_item_id
+      e os valores históricos de preço e custo registrados na venda.
+    config:
+      meta:
+        grain: uma linha por order_item_id
+    columns:
+      - name: order_item_id
+        description: Chave primária do item.
+        data_tests:
+          - unique
+          - not_null
+      - name: order_id
+        description: Pedido ao qual o item pertence.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_orders')
+                field: order_id
+      - name: product_id
+        description: Produto vendido.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_products')
+                field: product_id
+      - name: quantity
+        description: Quantidade vendida.
+        data_tests:
+          - not_null
+      - name: unit_price
+        description: Preço unitário histórico.
+        data_tests:
+          - not_null
+      - name: unit_cost
+        description: Custo unitário histórico.
+        data_tests:
+          - not_null
+      - name: discount_percentage
+        description: Percentual de desconto aplicado ao item.
+        data_tests:
+          - not_null
+      - name: line_total
+        description: Valor líquido do item.
+        data_tests:
+          - not_null
+
+  - name: stg_products
+    description: >
+      Visão de staging do catálogo Silver. Preserva uma linha por product_id
+      e o estado atual de preço, custo e estoque.
+    config:
+      meta:
+        grain: uma linha por product_id
+    columns:
+      - name: product_id
+        description: Chave primária do produto.
+        data_tests:
+          - unique
+          - not_null
+      - name: product_name
+        description: Nome comercial do produto.
+        data_tests:
+          - not_null
+      - name: category
+        description: Categoria do produto.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - Alimentos
+                  - Beleza
+                  - Brinquedos
+                  - Casa e Decoração
+                  - Eletrônicos
+                  - Esporte
+                  - Livros
+                  - Moda
+      - name: brand
+        description: Marca do produto.
+        data_tests:
+          - not_null
+      - name: unit_price
+        description: Preço atual de catálogo.
+        data_tests:
+          - not_null
+      - name: unit_cost
+        description: Custo atual de catálogo.
+        data_tests:
+          - not_null
+      - name: stock_quantity
+        description: Estoque atual.
+        data_tests:
+          - not_null
+      - name: minimum_stock
+        description: Estoque mínimo operacional.
+        data_tests:
+          - not_null
+      - name: supplier
+        description: Fornecedor atual.
+        data_tests:
+          - not_null
+      - name: created_at
+        description: Data de criação do produto.
+        data_tests:
+          - not_null
+      - name: is_active
+        description: Indicador de produto ativo.
+        data_tests:
+          - not_null

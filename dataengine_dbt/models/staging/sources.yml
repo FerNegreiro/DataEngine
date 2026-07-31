@@ -1,0 +1,119 @@
+version: 2
+
+sources:
+  - name: dataengine
+    description: >
+      Camada Silver do DataEngine carregada pelo pipeline principal. As tabelas
+      preservam o snapshot validado mais recente e são substituídas por carga completa.
+    database: dataengine-fernando-2026
+    schema: dataengine
+    tables:
+      - name: customers
+        description: Cadastro Silver de clientes, com uma linha por customer_id.
+        columns:
+          - name: customer_id
+            description: Identificador único do cliente.
+            data_tests:
+              - unique
+              - not_null
+          - name: full_name
+            description: Nome completo do cliente.
+          - name: email
+            description: E-mail normalizado em letras minúsculas.
+          - name: birth_date
+            description: Data de nascimento armazenada como timestamp.
+          - name: gender
+            description: Gênero declarado pelo cliente.
+          - name: city
+            description: Cidade do cliente.
+          - name: state
+            description: Unidade federativa brasileira em sigla.
+          - name: region
+            description: Região geográfica brasileira.
+          - name: registration_date
+            description: Data de cadastro armazenada como timestamp.
+          - name: acquisition_channel
+            description: Canal de aquisição do cliente.
+          - name: customer_segment
+            description: Segmento operacional atual do cliente.
+          - name: is_active
+            description: Indica se o cadastro está ativo.
+
+      - name: orders
+        description: Pedidos Silver, com uma linha por order_id.
+        columns:
+          - name: order_id
+            description: Identificador único do pedido.
+            data_tests:
+              - unique
+              - not_null
+          - name: customer_id
+            description: Identificador do cliente que realizou o pedido.
+          - name: order_date
+            description: Data do pedido armazenada como timestamp.
+          - name: order_status
+            description: Estado operacional atual do pedido.
+          - name: payment_method
+            description: Meio de pagamento escolhido.
+          - name: sales_channel
+            description: Canal em que o pedido foi realizado.
+          - name: shipping_cost
+            description: Frete cobrado no nível do pedido.
+          - name: discount_amount
+            description: Desconto adicional aplicado no nível do pedido.
+          - name: order_total
+            description: Valor final do pedido após frete e desconto do pedido.
+          - name: delivery_date
+            description: Data de entrega; nula para pedidos ainda não entregues ou cancelados.
+
+      - name: order_items
+        description: Itens Silver dos pedidos, com uma linha por order_item_id.
+        columns:
+          - name: order_item_id
+            description: Identificador único do item de pedido.
+            data_tests:
+              - unique
+              - not_null
+          - name: order_id
+            description: Pedido ao qual o item pertence.
+          - name: product_id
+            description: Produto vendido no item.
+          - name: quantity
+            description: Quantidade de unidades do produto.
+          - name: unit_price
+            description: Preço unitário registrado no momento da venda.
+          - name: unit_cost
+            description: Custo unitário registrado no momento da venda.
+          - name: discount_percentage
+            description: Percentual de desconto aplicado diretamente ao item.
+          - name: line_total
+            description: Valor líquido do item após seu desconto percentual.
+
+      - name: products
+        description: Catálogo Silver de produtos, com uma linha por product_id.
+        columns:
+          - name: product_id
+            description: Identificador único do produto.
+            data_tests:
+              - unique
+              - not_null
+          - name: product_name
+            description: Nome comercial do produto.
+          - name: category
+            description: Categoria comercial do produto.
+          - name: brand
+            description: Marca do produto.
+          - name: unit_price
+            description: Preço unitário atual de catálogo.
+          - name: unit_cost
+            description: Custo unitário atual de catálogo.
+          - name: stock_quantity
+            description: Quantidade atual disponível em estoque.
+          - name: minimum_stock
+            description: Estoque mínimo operacional.
+          - name: supplier
+            description: Fornecedor atual.
+          - name: created_at
+            description: Data de criação do produto armazenada como timestamp.
+          - name: is_active
+            description: Indica se o produto está ativo no catálogo.
