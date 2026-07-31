@@ -26,6 +26,29 @@ class ArtifactPaths:
         return {name: str(path) for name, path in asdict(self).items()}
 
 
+@dataclass(frozen=True)
+class ExperimentArtifactPaths:
+    metrics: Path
+    segment_metrics: Path
+    demand_segments: Path
+    model_comparison: Path
+    promotion_decision: Path
+    forecasts: Path
+    inventory_risk_comparison: Path
+    models: dict[str, Path]
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = {
+            name: str(path)
+            for name, path in asdict(self).items()
+            if name != "models"
+        }
+        payload["models"] = {
+            name: str(path) for name, path in self.models.items()
+        }
+        return payload
+
+
 def _json_default(value: Any) -> Any:
     if isinstance(value, (date, datetime, pd.Timestamp)):
         return value.isoformat()
@@ -73,4 +96,66 @@ def save_ml_artifacts(
     _write_json(paths.feature_columns, list(feature_columns))
     forecasts.to_parquet(paths.forecasts, index=False)
     inventory_risk.to_parquet(paths.inventory_risk, index=False)
+    return paths
+
+
+def _dataframe_records(dataframe: pd.DataFrame) -> list[dict[str, Any]]:
+    sanitized = dataframe.astype(object).where(pd.notna(dataframe), None)
+    return sanitized.to_dict(orient="records")
+
+
+def save_experiment_artifacts(
+    *,
+    aggregate_metrics: pd.DataFrame,
+    occurrence_metrics: pd.DataFrame,
+    segment_metrics: pd.DataFrame,
+    product_metrics: pd.DataFrame,
+    demand_segments: pd.DataFrame,
+    model_comparison: dict[str, Any],
+    promotion_decision: dict[str, Any],
+    forecasts: pd.DataFrame,
+    inventory_risk_comparison: pd.DataFrame,
+    models: dict[str, Any],
+    artifacts_dir: Path | str,
+) -> ExperimentArtifactPaths:
+    directory = Path(artifacts_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    models_directory = directory / "models"
+    models_directory.mkdir(parents=True, exist_ok=True)
+    model_paths = {
+        name: models_directory / f"{name}.joblib" for name in sorted(models)
+    }
+    paths = ExperimentArtifactPaths(
+        metrics=directory / "metrics.json",
+        segment_metrics=directory / "segment_metrics.json",
+        demand_segments=directory / "demand_segments.parquet",
+        model_comparison=directory / "model_comparison.json",
+        promotion_decision=directory / "promotion_decision.json",
+        forecasts=directory / "forecasts.parquet",
+        inventory_risk_comparison=directory / "inventory_risk_comparison.parquet",
+        models=model_paths,
+    )
+    _write_json(
+        paths.metrics,
+        {
+            "aggregate_metrics": _dataframe_records(aggregate_metrics),
+            "occurrence_metrics": _dataframe_records(occurrence_metrics),
+        },
+    )
+    _write_json(
+        paths.segment_metrics,
+        {
+            "segment_metrics": _dataframe_records(segment_metrics),
+            "product_metrics": _dataframe_records(product_metrics),
+        },
+    )
+    _write_json(paths.model_comparison, model_comparison)
+    _write_json(paths.promotion_decision, promotion_decision)
+    demand_segments.to_parquet(paths.demand_segments, index=False)
+    forecasts.to_parquet(paths.forecasts, index=False)
+    inventory_risk_comparison.to_parquet(
+        paths.inventory_risk_comparison, index=False
+    )
+    for name, model in models.items():
+        joblib.dump(model, model_paths[name])
     return paths

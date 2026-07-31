@@ -5,6 +5,7 @@ import pandas as pd
 from src.ml.config import MODEL_NAME
 from src.ml.evaluate import (
     calculate_forecast_metrics,
+    calculate_occurrence_metrics,
     evaluate_temporal_folds,
     primary_baseline_comparison,
     seasonal_naive_scale,
@@ -25,6 +26,20 @@ def test_forecast_metrics_handle_zero_zero_and_bias() -> None:
     assert metrics["smape"] == (0 + 2 / 3 + 2 + 0) / 4
     assert metrics["bias"] == 0.0
     assert metrics["mase"] == 1.0
+
+
+def test_occurrence_metrics_report_imbalance_sensitive_measures() -> None:
+    metrics = calculate_occurrence_metrics(
+        [0, 0, 1, 1],
+        [0.1, 0.2, 0.8, 0.4],
+        threshold=0.5,
+    )
+    assert metrics["precision"] == 1.0
+    assert metrics["recall"] == 0.5
+    assert metrics["f1"] == 2 / 3
+    assert metrics["pr_auc"] is not None
+    assert metrics["actual_sale_day_rate"] == 0.5
+    assert metrics["predicted_sale_day_rate"] == 0.25
 
 
 def test_mase_is_not_applicable_when_training_scale_is_zero() -> None:

@@ -5,6 +5,12 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from sklearn.metrics import (
+    average_precision_score,
+    f1_score,
+    precision_score,
+    recall_score,
+)
 
 from src.ml.baselines import BASELINE_PREDICTORS
 from src.ml.config import FORECAST_HORIZONS, MODEL_NAME, MODEL_VERSION
@@ -67,6 +73,43 @@ def calculate_forecast_metrics(
             if mase_denominator is not None and mase_denominator > 0
             else None
         ),
+    }
+
+
+def calculate_occurrence_metrics(
+    actual_occurrence: Iterable[int | bool],
+    probabilities: Iterable[float],
+    *,
+    threshold: float,
+) -> dict[str, float | int | None]:
+    actual = np.asarray(list(actual_occurrence), dtype="int8")
+    predicted_probability = np.asarray(list(probabilities), dtype=float)
+    if actual.shape != predicted_probability.shape or actual.size == 0:
+        raise ValueError("Ocorrências e probabilidades devem ter o mesmo tamanho positivo")
+    if not np.isin(actual, [0, 1]).all():
+        raise ValueError("A ocorrência real deve ser binária")
+    if not np.isfinite(predicted_probability).all():
+        raise ValueError("As probabilidades devem ser finitas")
+    if ((predicted_probability < 0) | (predicted_probability > 1)).any():
+        raise ValueError("As probabilidades devem estar entre zero e um")
+    if not 0 < threshold < 1:
+        raise ValueError("threshold deve estar entre zero e um")
+
+    predicted = (predicted_probability >= threshold).astype("int8")
+    return {
+        "threshold": threshold,
+        "precision": float(precision_score(actual, predicted, zero_division=0)),
+        "recall": float(recall_score(actual, predicted, zero_division=0)),
+        "f1": float(f1_score(actual, predicted, zero_division=0)),
+        "pr_auc": (
+            float(average_precision_score(actual, predicted_probability))
+            if actual.sum() > 0
+            else None
+        ),
+        "predicted_sale_day_rate": float(predicted.mean()),
+        "actual_sale_day_rate": float(actual.mean()),
+        "positive_day_count": int(actual.sum()),
+        "row_count": int(actual.size),
     }
 
 

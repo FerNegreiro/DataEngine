@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from src.ml.config import MODEL_FEATURE_COLUMNS, MODEL_NAME, MODEL_VERSION
+from src.ml.config import HURDLE_FEATURE_COLUMNS, MODEL_NAME, MODEL_VERSION
 from src.ml.feature_engineering import GRID_COLUMNS
 
 Predictor = Callable[[pd.DataFrame], np.ndarray]
@@ -76,8 +76,31 @@ def _build_step_features(
             record[f"rolling_std_{window}"] = observations.std(ddof=0)
         for window in (7, 14, 30):
             record[f"sales_last_{window}_days"] = _window(values, window).sum()
+        positive_values = np.asarray(values, dtype=float) > 0
+        positive_count = int(positive_values.sum())
+        for window in (7, 14, 28, 30):
+            record[f"sale_days_last_{window}"] = int(positive_values[-window:].sum())
+        record["historical_sale_probability"] = (
+            positive_count / len(values) if values else 0.0
+        )
+        record["mean_positive_demand"] = (
+            float(np.asarray(values, dtype=float)[positive_values].mean())
+            if positive_count
+            else 0.0
+        )
+        record["causal_adi"] = len(values) / positive_count if positive_count else np.nan
+        positive_indices = np.flatnonzero(positive_values)
+        record["days_since_last_sale"] = (
+            len(values) - int(positive_indices[-1]) if positive_indices.size else np.nan
+        )
+        zero_streak = 0
+        for quantity in reversed(values):
+            if quantity > 0:
+                break
+            zero_streak += 1
+        record["current_zero_streak"] = zero_streak
         records.append(record)
-    return pd.DataFrame.from_records(records).loc[:, list(MODEL_FEATURE_COLUMNS)]
+    return pd.DataFrame.from_records(records).loc[:, list(HURDLE_FEATURE_COLUMNS)]
 
 
 def recursive_forecast(

@@ -4,7 +4,7 @@ import json
 
 import pandas as pd
 
-from src.ml.artifacts import save_ml_artifacts
+from src.ml.artifacts import save_experiment_artifacts, save_ml_artifacts
 
 
 def test_save_ml_artifacts_writes_the_required_files(tmp_path: object) -> None:
@@ -30,3 +30,29 @@ def test_save_ml_artifacts_writes_the_required_files(tmp_path: object) -> None:
     assert all(path.is_file() for path in paths.__dict__.values())
     assert json.loads(paths.feature_columns.read_text(encoding="utf-8")) == ["lag_1"]
     assert pd.read_parquet(paths.forecasts).loc[0, "predicted_quantity"] == 1.5
+
+
+def test_save_experiment_artifacts_preserves_complete_iteration_handoff(
+    tmp_path: object,
+) -> None:
+    metric = pd.DataFrame([{"split": "fold", "model_name": "m", "wape": 1.0}])
+    segments = pd.DataFrame([{"product_id": "P1", "demand_pattern": "intermittent"}])
+    forecasts = pd.DataFrame([{"product_id": "P1", "predicted_quantity": 1.0}])
+    risk = pd.DataFrame([{"product_id": "P1", "risk_class": "adequate"}])
+    paths = save_experiment_artifacts(
+        aggregate_metrics=metric,
+        occurrence_metrics=metric,
+        segment_metrics=metric,
+        product_metrics=metric,
+        demand_segments=segments,
+        model_comparison={"champion": "m"},
+        promotion_decision={"decision": "rejected"},
+        forecasts=forecasts,
+        inventory_risk_comparison=risk,
+        models={"m": {"kind": "test"}},
+        artifacts_dir=tmp_path,
+    )
+    assert paths.metrics.is_file()
+    assert paths.segment_metrics.is_file()
+    assert paths.models["m"].is_file()
+    assert pd.read_parquet(paths.demand_segments).loc[0, "product_id"] == "P1"

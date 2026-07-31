@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+import numpy as np
 import pandas as pd
 
 from src.ml.config import LAG_DAYS, ROLLING_WINDOWS
@@ -142,4 +143,60 @@ def add_temporal_features(grid: pd.DataFrame) -> pd.DataFrame:
             .rolling(size, min_periods=1)
             .sum()
         )
+    positive = featured["quantity_sold"].gt(0).astype("int8")
+    positive_grouped = positive.groupby(featured["product_id"], sort=False, observed=True)
+    for window in (7, 14, 28, 30):
+        featured[f"sale_days_last_{window}"] = positive_grouped.transform(
+            lambda series, size=window: series.shift(1)
+            .rolling(size, min_periods=1)
+            .sum()
+        )
+
+    periods_before = featured.groupby(
+        "product_id", sort=False, observed=True
+    ).cumcount()
+    positive_before = positive_grouped.cumsum() - positive
+    quantity_before = grouped.cumsum() - featured["quantity_sold"]
+    featured["historical_sale_probability"] = np.divide(
+        positive_before.to_numpy(dtype=float),
+        periods_before.to_numpy(dtype=float),
+        out=np.zeros(len(featured), dtype=float),
+        where=periods_before.to_numpy(dtype=float) > 0,
+    )
+    featured["mean_positive_demand"] = np.divide(
+        quantity_before.to_numpy(dtype=float),
+        positive_before.to_numpy(dtype=float),
+        out=np.zeros(len(featured), dtype=float),
+        where=positive_before.to_numpy(dtype=float) > 0,
+    )
+    featured["causal_adi"] = np.divide(
+        periods_before.to_numpy(dtype=float),
+        positive_before.to_numpy(dtype=float),
+        out=np.full(len(featured), np.nan, dtype=float),
+        where=positive_before.to_numpy(dtype=float) > 0,
+    )
+
+    recency = grouped.transform(_causal_recency)
+    featured["days_since_last_sale"] = recency.map(lambda values: values[0])
+    featured["current_zero_streak"] = recency.map(lambda values: values[1])
     return featured
+
+
+def _causal_recency(series: pd.Series) -> pd.Series:
+    """Retorna recência e sequência de zeros usando somente valores anteriores."""
+    last_positive_index: int | None = None
+    zero_streak = 0
+    values: list[tuple[float, int]] = []
+    for index, quantity in enumerate(series.to_numpy(dtype=float)):
+        days_since = (
+            float(index - last_positive_index)
+            if last_positive_index is not None
+            else np.nan
+        )
+        values.append((days_since, zero_streak))
+        if quantity > 0:
+            last_positive_index = index
+            zero_streak = 0
+        else:
+            zero_streak += 1
+    return pd.Series(values, index=series.index, dtype=object)

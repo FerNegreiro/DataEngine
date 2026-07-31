@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import sklearn
 
-from src.ml.artifacts import save_ml_artifacts
+from src.ml.artifacts import save_experiment_artifacts, save_ml_artifacts
 from src.ml.config import (
     ARTIFACTS_DIR,
     BIGQUERY_LOCATION,
@@ -34,6 +34,7 @@ from src.ml.evaluate import (
 )
 from src.ml.feature_engineering import add_temporal_features, build_product_day_grid
 from src.ml.inventory_risk import classify_inventory_risk
+from src.ml.model_selection import evaluate_iteration_02
 from src.ml.predict import model_predictor, recursive_forecast
 from src.ml.temporal_split import (
     build_expanding_window_folds,
@@ -75,9 +76,14 @@ def run_ml_pipeline(
     staging_dir: Path | str = ML_STAGING_DIR,
     bigquery_client: Any | None = None,
     model_parameters: Mapping[str, Any] | None = None,
+    experiment: str | None = None,
+    hurdle_classifier_parameters: Mapping[str, Any] | None = None,
+    hurdle_regressor_parameters: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     if forecast_horizon not in FORECAST_HORIZONS:
         raise ValueError(f"forecast_horizon deve ser um de {FORECAST_HORIZONS}")
+    if experiment is not None and experiment != "iteration_02":
+        raise ValueError("experiment deve ser iteration_02")
     analytical_data, source_mode = _load_inputs(
         sales=sales,
         products=products,
@@ -103,6 +109,65 @@ def run_ml_pipeline(
         required_start=EXPECTED_DATA_START_DATE,
         required_end=FINAL_TEST_END_DATE,
     )
+
+    if experiment is not None:
+        experiment_result = evaluate_iteration_02(
+            grid,
+            analytical_data.products,
+            forecast_horizon=forecast_horizon,
+            model_parameters=model_parameters,
+            hurdle_classifier_parameters=hurdle_classifier_parameters,
+            hurdle_regressor_parameters=hurdle_regressor_parameters,
+        )
+        experiment_directory = Path(artifacts_dir) / "experiments" / experiment
+        experiment_paths = save_experiment_artifacts(
+            aggregate_metrics=experiment_result.aggregate_metrics,
+            occurrence_metrics=experiment_result.occurrence_metrics,
+            segment_metrics=experiment_result.segment_metrics,
+            product_metrics=experiment_result.product_metrics,
+            demand_segments=experiment_result.demand_segments,
+            model_comparison=experiment_result.model_comparison,
+            promotion_decision=experiment_result.promotion_decision,
+            forecasts=experiment_result.forecasts,
+            inventory_risk_comparison=experiment_result.inventory_risk_comparison,
+            models=experiment_result.models,
+            artifacts_dir=experiment_directory,
+        )
+        final_segments = experiment_result.demand_segments.loc[
+            experiment_result.demand_segments["split"].eq("final_test")
+        ]
+        champion = experiment_result.promotion_decision["final_champion"]
+        champion_risk = experiment_result.inventory_risk_comparison.loc[
+            experiment_result.inventory_risk_comparison["model_name"].eq(champion)
+        ]
+        return {
+            "experiment": experiment,
+            "grid_rows": int(len(grid)),
+            "product_count": int(grid["product_id"].nunique()),
+            "demand_segment_distribution": {
+                str(pattern): int(count)
+                for pattern, count in final_segments["demand_pattern"]
+                .value_counts()
+                .sort_index()
+                .items()
+            },
+            "occurrence_threshold": experiment_result.model_comparison[
+                "occurrence_threshold_selection"
+            ],
+            "promotion_decision": experiment_result.promotion_decision,
+            "final_champion": champion,
+            "champion_risk_distribution": {
+                str(risk_class): int(count)
+                for risk_class, count in champion_risk["risk_class"]
+                .value_counts()
+                .items()
+            },
+            "risk_changes_vs_final_champion": experiment_result.model_comparison[
+                "risk_changes_vs_final_champion"
+            ],
+            "artifact_paths": experiment_paths.to_dict(),
+            "bigquery_write_performed": False,
+        }
 
     validation_folds = build_expanding_window_folds(grid)
     final_test_fold = build_final_test_fold(grid)
@@ -235,6 +300,11 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--artifacts-dir", type=Path, default=ARTIFACTS_DIR)
     parser.add_argument("--staging-dir", type=Path, default=ML_STAGING_DIR)
+    parser.add_argument(
+        "--experiment",
+        choices=("iteration_02",),
+        help="Executa uma iteração experimental sem substituir os artefatos anteriores.",
+    )
     return parser.parse_args()
 
 
@@ -245,6 +315,7 @@ def main() -> None:
         forecast_horizon=arguments.forecast_horizon,
         artifacts_dir=arguments.artifacts_dir,
         staging_dir=arguments.staging_dir,
+        experiment=arguments.experiment,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

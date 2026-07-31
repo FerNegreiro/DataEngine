@@ -208,6 +208,50 @@ em `data/ml_staging` e use `--skip-bigquery`. A execução salva modelo, metadad
 features, previsões e classificação de risco em `artifacts/ml`. Esse fluxo não cria datasets,
 não grava tabelas no BigQuery e não altera o pipeline de engenharia existente.
 
+### Iterações de demanda intermitente
+
+A primeira iteração confirmou 130.000 produto-dias, com 96,09% de zeros. O challenger
+`HistGradientBoostingRegressor(loss="poisson")` perdeu para a média móvel causal de 28 dias
+nos três folds de validação e no teste final de 14 dias, por isso não foi promovido.
+
+A segunda iteração classifica cada produto dentro do período de treinamento do respectivo
+fold. Ela usa ADI, definido como períodos observados divididos por dias com demanda positiva,
+e CV², o quadrado do coeficiente de variação populacional das demandas positivas. Os limites
+ADI `1,32` e CV² `0,49` seguem a categorização de Syntetos, Boylan e Croston em
+[On the categorization of demand patterns](https://doi.org/10.1057/palgrave.jors.2601841):
+
+- `smooth`: ADI < 1,32 e CV² < 0,49;
+- `intermittent`: ADI >= 1,32 e CV² < 0,49;
+- `erratic`: ADI < 1,32 e CV² >= 0,49;
+- `lumpy`: ADI >= 1,32 e CV² >= 0,49.
+
+Também foram adicionados Croston clássico, Croston-SBA e TSB. O TSB atualiza a probabilidade
+de ocorrência em todos os períodos, conforme a abordagem de Teunter, Syntetos e Babai em
+[Intermittent demand: Linking forecasting to inventory obsolescence](https://doi.org/10.1016/j.ejor.2011.05.018).
+O modelo hurdle global separa a probabilidade de venda da quantidade condicional positiva e
+compara regressões Poisson e `squared_error`. Todas as features adicionais são causais.
+
+Execute a segunda iteração sem substituir os artefatos anteriores:
+
+```bash
+python -m pipelines.machine_learning.run_ml_pipeline --experiment iteration_02
+```
+
+Na execução de referência, os 100 produtos foram classificados como `intermittent` em todos
+os folds. O threshold da ocorrência foi `0,50`, escolhido somente nos três folds de validação.
+No horizonte principal, o Croston-SBA apresentou WAPE de 133,70%, 124,34% e 129,64%, contra
+165,93%, 143,75% e 176,15% da média móvel 28. No teste final, obteve 106,85% contra 115,12%.
+
+Apesar de vencer os três folds e o teste, o Croston-SBA foi rejeitado porque seu viés final de
+`-53,22%` excedeu o limite absoluto pré-fixado de 25%. A promoção também exige ausência de
+degradação relativa acima de 10%, não piorar materialmente mais de 50% dos segmentos e passar
+as verificações de qualidade. A média móvel de 28 dias permanece como champion do cenário de
+risco de estoque.
+
+Os resultados ficam em `artifacts/ml/experiments/iteration_02`, incluindo métricas agregadas,
+por produto e segmento, classificação ADI/CV², decisão de promoção, previsões, comparação de
+risco e modelos locais aplicáveis. Todo esse diretório permanece ignorado pelo Git.
+
 ## Execução com Docker
 
 O container reproduzível executa o pipeline completo: gera produtos, clientes, pedidos e

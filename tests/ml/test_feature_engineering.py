@@ -55,3 +55,41 @@ def test_current_target_does_not_change_current_rolling_features(ml_grid: pd.Dat
         original.loc[mask, feature_columns].iloc[0],
         changed.loc[mask, feature_columns].iloc[0],
     )
+
+
+def test_intermittent_features_use_only_prior_observations(ml_grid: pd.DataFrame) -> None:
+    original = add_temporal_features(ml_grid)
+    changed_grid = ml_grid.copy()
+    mask = (changed_grid["product_id"] == "P1") & (
+        changed_grid["date"] == pd.Timestamp("2026-01-15")
+    )
+    changed_grid.loc[mask, "quantity_sold"] = 500
+    changed = add_temporal_features(changed_grid)
+    columns = [
+        "days_since_last_sale",
+        "sale_days_last_7",
+        "sale_days_last_14",
+        "sale_days_last_28",
+        "sale_days_last_30",
+        "historical_sale_probability",
+        "mean_positive_demand",
+        "causal_adi",
+        "current_zero_streak",
+    ]
+    pd.testing.assert_series_equal(
+        original.loc[mask, columns].iloc[0],
+        changed.loc[mask, columns].iloc[0],
+    )
+
+
+def test_intermittent_feature_values_have_causal_meaning(ml_grid: pd.DataFrame) -> None:
+    featured = add_temporal_features(ml_grid)
+    row = featured.loc[
+        (featured["product_id"] == "P1")
+        & (featured["date"] == pd.Timestamp("2026-01-03"))
+    ].iloc[0]
+    assert row["days_since_last_sale"] == 2
+    assert row["current_zero_streak"] == 1
+    assert row["historical_sale_probability"] == 0.5
+    assert row["mean_positive_demand"] == 2
+    assert row["causal_adi"] == 2
