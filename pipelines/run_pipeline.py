@@ -5,6 +5,7 @@ from typing import TypeVar
 
 import pandas as pd
 
+from pipelines.loading.load_silver_to_bigquery import load_silver_to_bigquery
 from pipelines.loading.upload_to_s3 import (
     normalize_execution_date,
     upload_processed_files,
@@ -139,6 +140,22 @@ def run_pipeline(
     )
     if silver_report["partition"] != upload_report["partition"]:
         raise RuntimeError("As camadas Bronze e Silver utilizaram partições diferentes")
+    silver_files = {
+        file_report["dataset"]: file_report["local_path"]
+        for file_report in silver_report["files"]
+    }
+    bigquery_report = _run_stage(
+        "carga da camada Silver no BigQuery",
+        lambda: load_silver_to_bigquery(
+            silver_files=silver_files,
+            silver_report=silver_report,
+            execution_date=utc_execution_date,
+        ),
+    )
+    if bigquery_report["partition"] != silver_report["partition"]:
+        raise RuntimeError(
+            "Bronze, Silver e BigQuery utilizaram partições diferentes"
+        )
 
     return {
         "success": True,
@@ -162,6 +179,7 @@ def run_pipeline(
         },
         "s3": upload_report,
         "silver": silver_report,
+        "bigquery": bigquery_report,
     }
 
 
@@ -183,6 +201,11 @@ def main() -> int:
         f"- Silver: {report['silver']['uploaded_count']} arquivo(s) enviado(s) "
         f"para o bucket {report['silver']['bucket']}"
     )
+    print(
+        f"- BigQuery: {report['bigquery']['loaded_count']} tabela(s) carregada(s)"
+    )
+    print(f"- Projeto: {report['bigquery']['project_id']}")
+    print(f"- Dataset: {report['bigquery']['dataset_id']}")
     print(f"- Partição: {report['s3']['partition']}")
     return 0
 

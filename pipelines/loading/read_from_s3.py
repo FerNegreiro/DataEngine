@@ -21,19 +21,22 @@ DEFAULT_SILVER_STAGING_DIR = Path("data/silver_staging")
 logger = logging.getLogger(__name__)
 
 
-def _missing_bronze_message(
+def _missing_layer_message(
+    layer_name: str,
     dataset_name: str,
     bucket_name: str,
     object_key: str,
 ) -> str:
+    layer_label = layer_name.capitalize()
     return (
-        "Falha na leitura da camada Bronze: "
+        f"Falha na leitura da camada {layer_label}: "
         f"objeto ausente para dataset={dataset_name}, "
         f"bucket={bucket_name}, chave={object_key}"
     )
 
 
-def download_bronze_files(
+def download_layer_files(
+    layer_name: str,
     staging_dir: Path | str = DEFAULT_SILVER_STAGING_DIR,
     bucket_name: str = BUCKET_NAME,
     execution_date: datetime | None = None,
@@ -42,8 +45,9 @@ def download_bronze_files(
     utc_execution_date = normalize_execution_date(execution_date)
     partition = build_partition(utc_execution_date)
     client = s3_client if s3_client is not None else boto3.client("s3")
-    destination_directory = Path(staging_dir) / "bronze"
+    destination_directory = Path(staging_dir) / layer_name
     destination_directory.mkdir(parents=True, exist_ok=True)
+    layer_label = layer_name.capitalize()
 
     downloaded_files: list[dict[str, object]] = []
     for dataset_name, filename in FILES_TO_UPLOAD.items():
@@ -51,7 +55,7 @@ def download_bronze_files(
             dataset_name=dataset_name,
             filename=filename,
             execution_date=utc_execution_date,
-            layer="bronze",
+            layer=layer_name,
         )
         local_path = destination_directory / filename
         logger.info(
@@ -69,22 +73,32 @@ def download_bronze_files(
             )
         except FileNotFoundError as error:
             raise FileNotFoundError(
-                _missing_bronze_message(dataset_name, bucket_name, object_key)
+                _missing_layer_message(
+                    layer_name,
+                    dataset_name,
+                    bucket_name,
+                    object_key,
+                )
             ) from error
         except ClientError as error:
             error_code = str(error.response.get("Error", {}).get("Code", ""))
             if error_code in {"404", "NoSuchKey", "NotFound"}:
                 raise FileNotFoundError(
-                    _missing_bronze_message(dataset_name, bucket_name, object_key)
+                    _missing_layer_message(
+                        layer_name,
+                        dataset_name,
+                        bucket_name,
+                        object_key,
+                    )
                 ) from error
             raise RuntimeError(
-                "Falha na leitura da camada Bronze: "
+                f"Falha na leitura da camada {layer_label}: "
                 f"dataset={dataset_name}, bucket={bucket_name}, "
                 f"chave={object_key}: {error}"
             ) from error
         except BotoCoreError as error:
             raise RuntimeError(
-                "Falha na leitura da camada Bronze: "
+                f"Falha na leitura da camada {layer_label}: "
                 f"dataset={dataset_name}, bucket={bucket_name}, "
                 f"chave={object_key}: {error}"
             ) from error
@@ -104,6 +118,37 @@ def download_bronze_files(
         "execution_date": utc_execution_date.isoformat(),
         "partition": partition,
         "bucket": bucket_name,
+        "source_layer": layer_name,
         "downloaded_count": len(downloaded_files),
         "files": downloaded_files,
     }
+
+
+def download_bronze_files(
+    staging_dir: Path | str = DEFAULT_SILVER_STAGING_DIR,
+    bucket_name: str = BUCKET_NAME,
+    execution_date: datetime | None = None,
+    s3_client: Any | None = None,
+) -> dict[str, object]:
+    return download_layer_files(
+        layer_name="bronze",
+        staging_dir=staging_dir,
+        bucket_name=bucket_name,
+        execution_date=execution_date,
+        s3_client=s3_client,
+    )
+
+
+def download_silver_files(
+    staging_dir: Path | str = DEFAULT_SILVER_STAGING_DIR,
+    bucket_name: str = BUCKET_NAME,
+    execution_date: datetime | None = None,
+    s3_client: Any | None = None,
+) -> dict[str, object]:
+    return download_layer_files(
+        layer_name="silver",
+        staging_dir=staging_dir,
+        bucket_name=bucket_name,
+        execution_date=execution_date,
+        s3_client=s3_client,
+    )

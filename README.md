@@ -107,6 +107,38 @@ A Bronze preserva os dados processados de origem. A Silver normaliza textos, dat
 valores monetários e ordenação, valida schemas e relacionamentos e só é enviada ao S3 quando
 não há erros. O bucket configurado é `dataengine-fernando-2026`.
 
+## Carga Silver no Google BigQuery
+
+Depois de publicar a Silver, o pipeline carrega o mesmo snapshot Parquet nas tabelas:
+
+```text
+dataengine-fernando-2026.dataengine.customers
+dataengine-fernando-2026.dataengine.orders
+dataengine-fernando-2026.dataengine.order_items
+dataengine-fernando-2026.dataengine.products
+```
+
+O dataset `dataengine` usa a região `southamerica-east1`. A carga é um full refresh:
+cada tabela usa `WRITE_TRUNCATE`, portanto o snapshot Silver atual substitui completamente
+seu conteúdo anterior. Bronze, Silver e BigQuery compartilham a mesma data UTC da execução.
+
+O fluxo completo é executado com:
+
+```bash
+python -m pipelines.run_pipeline
+```
+
+A carga BigQuery também pode ser executada isoladamente para uma partição explícita:
+
+```bash
+python -m pipelines.loading.load_silver_to_bigquery \
+  --execution-date 2026-07-30T00:00:00+00:00
+```
+
+A autenticação local usa Application Default Credentials (ADC), sem arquivos de credenciais
+no repositório. O projeto deve existir e o dataset deve estar disponível na região correta;
+caso o dataset não exista, o pipeline tenta criá-lo quando as permissões permitirem.
+
 ## Execução com Docker
 
 O container reproduzível executa o pipeline completo: gera produtos, clientes, pedidos e
@@ -125,4 +157,4 @@ docker compose run --rm dataengine
 
 Os volumes `./data/raw:/app/data/raw` e `./data/processed:/app/data/processed` preservam no
 host os quatro CSVs brutos e os quatro Parquets gerados pelo container. A execução do fluxo
-completo requer credenciais AWS disponíveis para o SDK do Python.
+completo requer credenciais AWS e Google ADC disponíveis para os respectivos SDKs.

@@ -78,12 +78,43 @@ def mock_s3_upload():
             "duration_seconds": 0.01,
         }
 
+    def fake_bigquery_load(
+        silver_files: dict[str, Path | str],
+        silver_report: dict[str, object],
+        execution_date: datetime,
+    ) -> dict[str, object]:
+        return {
+            "success": True,
+            "execution_date": execution_date.isoformat(),
+            "partition": silver_report["partition"],
+            "project_id": "dataengine-fernando-2026",
+            "dataset_id": "dataengine",
+            "location": "southamerica-east1",
+            "write_disposition": "WRITE_TRUNCATE",
+            "loaded_count": 4,
+            "input_rows": {},
+            "output_rows": {},
+            "validation": {
+                "is_valid": True,
+                "errors": [],
+                "warnings": [],
+                "tables": {},
+            },
+            "tables": {},
+            "duration_seconds": 0.01,
+        }
+
     with (
         patch.object(pipeline_module, "upload_processed_files", fake_upload),
         patch.object(
             pipeline_module,
             "process_bronze_to_silver",
             fake_silver_processing,
+        ),
+        patch.object(
+            pipeline_module,
+            "load_silver_to_bigquery",
+            fake_bigquery_load,
         ),
     ):
         yield
@@ -167,6 +198,7 @@ def test_validation_runs_before_processing(
     original_processing = pipeline_module.process_raw_to_parquet
     original_upload = pipeline_module.upload_processed_files
     original_silver_processing = pipeline_module.process_bronze_to_silver
+    original_bigquery_load = pipeline_module.load_silver_to_bigquery
 
     def tracked_validation(**paths: Path | str) -> dict[str, object]:
         call_order.append("validation")
@@ -184,6 +216,10 @@ def test_validation_runs_before_processing(
         call_order.append("silver")
         return original_silver_processing(**options)
 
+    def tracked_bigquery_load(**options: object) -> dict[str, object]:
+        call_order.append("bigquery")
+        return original_bigquery_load(**options)
+
     monkeypatch.setattr(pipeline_module, "validate_raw_data", tracked_validation)
     monkeypatch.setattr(pipeline_module, "process_raw_to_parquet", tracked_processing)
     monkeypatch.setattr(pipeline_module, "upload_processed_files", tracked_upload)
@@ -192,9 +228,20 @@ def test_validation_runs_before_processing(
         "process_bronze_to_silver",
         tracked_silver_processing,
     )
+    monkeypatch.setattr(
+        pipeline_module,
+        "load_silver_to_bigquery",
+        tracked_bigquery_load,
+    )
     _run_in_directory(tmp_path)
 
-    assert call_order == ["validation", "processing", "upload", "silver"]
+    assert call_order == [
+        "validation",
+        "processing",
+        "upload",
+        "silver",
+        "bigquery",
+    ]
 
 
 def test_pipeline_report_has_expected_structure(
@@ -208,6 +255,7 @@ def test_pipeline_report_has_expected_structure(
         "validation",
         "s3",
         "silver",
+        "bigquery",
     ]
     assert list(successful_pipeline["rows"]) == [
         "products",
@@ -226,6 +274,7 @@ def test_pipeline_report_has_expected_structure(
         "partition"
     ]
     assert successful_pipeline["silver"]["uploaded_count"] == 4
+    assert successful_pipeline["bigquery"]["loaded_count"] == 4
 
 
 def test_bronze_and_silver_receive_same_fixed_execution_date(
@@ -261,10 +310,27 @@ def test_bronze_and_silver_receive_same_fixed_execution_date(
             "partition": partition,
             "bucket": bucket_name,
             "uploaded_count": 4,
+            "files": [],
+        }
+
+    def fake_bigquery(
+        silver_files: dict[str, Path | str],
+        silver_report: dict[str, object],
+        execution_date: datetime,
+    ) -> dict[str, object]:
+        received_dates.append(execution_date)
+        return {
+            "success": True,
+            "execution_date": execution_date.isoformat(),
+            "partition": partition,
+            "project_id": "dataengine-fernando-2026",
+            "dataset_id": "dataengine",
+            "loaded_count": 4,
         }
 
     monkeypatch.setattr(pipeline_module, "upload_processed_files", fake_upload)
     monkeypatch.setattr(pipeline_module, "process_bronze_to_silver", fake_silver)
+    monkeypatch.setattr(pipeline_module, "load_silver_to_bigquery", fake_bigquery)
 
     report = run_pipeline(
         products_quantity=10,
@@ -277,8 +343,9 @@ def test_bronze_and_silver_receive_same_fixed_execution_date(
         execution_date=fixed_date,
     )
 
-    assert received_dates == [fixed_date, fixed_date]
+    assert received_dates == [fixed_date, fixed_date, fixed_date]
     assert report["s3"]["partition"] == report["silver"]["partition"]
+    assert report["silver"]["partition"] == report["bigquery"]["partition"]
 
 
 def test_pipeline_is_deterministic(tmp_path: Path) -> None:
@@ -388,6 +455,26 @@ def test_pipeline_returns_context_when_silver_fails(
         _run_in_directory(tmp_path)
 
 
+def test_pipeline_returns_context_when_bigquery_load_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_bigquery(**options: object) -> dict[str, object]:
+        raise ValueError("falha BigQuery simulada")
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "load_silver_to_bigquery",
+        fail_bigquery,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="Falha na etapa carga da camada Silver no BigQuery",
+    ):
+        _run_in_directory(tmp_path)
+
+
 def test_direct_execution_returns_zero_on_success(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -412,6 +499,13 @@ def test_direct_execution_returns_zero_on_success(
             "bucket": "test-bucket",
             "files": [],
         },
+        "bigquery": {
+            "execution_date": "2026-01-02T03:04:05+00:00",
+            "partition": "year=2026/month=01/day=02",
+            "project_id": "dataengine-fernando-2026",
+            "dataset_id": "dataengine",
+            "loaded_count": 4,
+        },
     }
     monkeypatch.setattr(pipeline_module, "run_pipeline", lambda: report)
 
@@ -420,6 +514,9 @@ def test_direct_execution_returns_zero_on_success(
     assert "Pipeline concluído com sucesso" in output
     assert "Bronze: 4 arquivo(s) enviado(s) para o bucket test-bucket" in output
     assert "Silver: 4 arquivo(s) enviado(s) para o bucket test-bucket" in output
+    assert "BigQuery: 4 tabela(s) carregada(s)" in output
+    assert "Projeto: dataengine-fernando-2026" in output
+    assert "Dataset: dataengine" in output
     assert "Partição: year=2026/month=01/day=02" in output
 
 
