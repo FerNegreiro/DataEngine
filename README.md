@@ -320,3 +320,34 @@ docker compose run --rm dataengine
 Os volumes `./data/raw:/app/data/raw` e `./data/processed:/app/data/processed` preservam no
 host os quatro CSVs brutos e os quatro Parquets gerados pelo container. A execução do fluxo
 completo requer credenciais AWS e Google ADC disponíveis para os respectivos SDKs.
+
+## Orquestração manual com Apache Airflow
+
+O DAG `dataengine_full_pipeline` coordena o fluxo completo somente por acionamento manual,
+sem agendamento e sem catchup. Ele aceita uma execução ativa por vez e segue esta ordem:
+
+```text
+validate_environment
+  -> run_data_pipeline
+  -> dbt_debug
+  -> dbt_run
+  -> dbt_test
+  -> run_ml_pipeline
+  -> publish_ml_results
+  -> validate_final_outputs
+```
+
+`run_ml_pipeline` consulta as fontes analíticas e gera artefatos locais sem usar o modo de
+publicação. Isso mantém `moving_average_28` como champion oficial. A tarefa separada
+`publish_ml_results` publica uma única vez o pacote produtivo já validado; sua estratégia de
+`MERGE` torna novas tentativas com o mesmo pacote idempotentes. O DAG não transfere
+DataFrames, Parquets ou modelos por XCom.
+
+Antes de iniciar o fluxo, `validate_environment` verifica dependências, caminhos, AWS STS,
+o bucket S3, Google ADC e os três datasets do BigQuery. Ao final,
+`validate_final_outputs` consulta somente leitura as relações de origem, dbt e ML e confere a
+execução bem-sucedida mais recente, o champion, os horizontes, as duplicidades e as contagens.
+
+As credenciais permanecem fora do repositório. Os diretórios AWS, Google Cloud e dbt
+configurados em `airflow/.env` são montados como somente leitura nos containers, conforme os
+exemplos de `airflow/.env.example`.

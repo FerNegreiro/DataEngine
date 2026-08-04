@@ -82,9 +82,13 @@ def test_iteration_02_runs_end_to_end_without_bigquery(
 
 def test_cli_keeps_local_mode_and_exposes_explicit_publication_mode() -> None:
     assert _parse_args([]).publish_bigquery is False
+    assert _parse_args([]).prepare_publication is False
+    assert _parse_args(["--prepare-publication"]).prepare_publication is True
     assert _parse_args(["--publish-bigquery"]).publish_bigquery is True
     with pytest.raises(SystemExit):
         _parse_args(["--publish-bigquery", "--experiment", "iteration_02"])
+    with pytest.raises(SystemExit):
+        _parse_args(["--prepare-publication", "--publish-bigquery"])
 
 
 def test_publish_mode_builds_only_official_champion_and_calls_publisher(
@@ -132,3 +136,18 @@ def test_publish_mode_builds_only_official_champion_and_calls_publisher(
     assert result["forecast_rows"] == 51
     assert result["risk_rows"] == 1
     assert result["registry_rows"] == 5
+
+    def fail_publish(*_: object, **__: object) -> dict[str, object]:
+        raise AssertionError("prepare_publication não deve publicar")
+
+    monkeypatch.setattr(pipeline_module, "publish_ml_results", fail_publish)
+    prepared = run_ml_pipeline(
+        sales=sales,
+        products=ml_products,
+        prepare_publication=True,
+        production_artifacts_dir=tmp_path / "prepared",
+        approved_experiment_dir=approved_experiment_dir,
+    )
+    assert prepared["prepare_publication"] is True
+    assert prepared["bigquery_write_performed"] is False
+    assert Path(prepared["artifact_paths"]["manifest"]).is_file()

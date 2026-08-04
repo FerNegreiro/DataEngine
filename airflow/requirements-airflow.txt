@@ -1,0 +1,3 @@
+# Mantém o Airflow na versão da imagem e instala as dependências do DataEngine.
+-r /tmp/requirements-project.txt
+

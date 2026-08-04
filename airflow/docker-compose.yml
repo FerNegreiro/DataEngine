@@ -1,0 +1,140 @@
+name: dataengine-airflow
+
+x-airflow-common: &airflow-common
+  image: ${AIRFLOW_IMAGE_NAME:-dataengine-airflow:3.3.0-python3.12}
+  environment: &airflow-common-env
+    AIRFLOW_UID: ${AIRFLOW_UID:-50000}
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-}
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres:5432/${POSTGRES_DB:-airflow}
+    AIRFLOW__API__BASE_URL: http://airflow-api-server:8080
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+    AIRFLOW_CONFIG: /opt/airflow/config/airflow.cfg
+    PYTHONPATH: /opt/airflow/project
+    AWS_SHARED_CREDENTIALS_FILE: /home/airflow/.aws/credentials
+    AWS_CONFIG_FILE: /home/airflow/.aws/config
+    GOOGLE_APPLICATION_CREDENTIALS: /home/airflow/.config/gcloud/application_default_credentials.json
+    DBT_PROFILES_DIR: /home/airflow/.dbt
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - ./plugins:/opt/airflow/plugins
+    - ./config:/opt/airflow/config
+    - ..:/opt/airflow/project
+    - "${AWS_CREDENTIALS_DIR:-./.credentials/aws}:/home/airflow/.aws-host:ro"
+    - "${GOOGLE_CREDENTIALS_DIR:-./.credentials/gcloud}:/home/airflow/.config/gcloud:ro"
+    - "${DBT_PROFILES_DIR_HOST:-./.credentials/dbt}:/home/airflow/.dbt:ro"
+  user: "${AIRFLOW_UID:-50000}:0"
+  working_dir: /opt/airflow/project
+
+x-airflow-service-dependencies: &airflow-service-dependencies
+  postgres:
+    condition: service_healthy
+  airflow-init:
+    condition: service_completed_successfully
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-airflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airflow}
+      POSTGRES_DB: ${POSTGRES_DB:-airflow}
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  airflow-api-server:
+    <<: *airflow-common
+    command: api-server
+    ports:
+      - "${AIRFLOW_API_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:8080/api/v2/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    depends_on: *airflow-service-dependencies
+
+  airflow-scheduler:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        set -e
+        cp -R /home/airflow/.aws-host/. /home/airflow/.aws/
+        chmod -R u+rwX,go-rwx /home/airflow/.aws
+        exec airflow scheduler
+    tmpfs:
+      - /home/airflow/.aws:uid=${AIRFLOW_UID:-50000},gid=0,mode=0700
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:8974/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    depends_on: *airflow-service-dependencies
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    command: dag-processor
+    restart: unless-stopped
+    depends_on: *airflow-service-dependencies
+
+  airflow-triggerer:
+    <<: *airflow-common
+    command: triggerer
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type TriggererJob --local"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    depends_on: *airflow-service-dependencies
+
+  airflow-init:
+    <<: *airflow-common
+    build:
+      context: ..
+      dockerfile: airflow/Dockerfile
+      args:
+        AIRFLOW_VERSION: "3.3.0"
+        PYTHON_VERSION: "3.12"
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        mkdir -p /opt/airflow/{dags,logs,plugins,config}
+        chown -R "$${AIRFLOW_UID:-50000}:0" /opt/airflow/{dags,logs,plugins,config}
+        exec /entrypoint airflow version
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USERNAME:-airflow}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-airflow}
+      _AIRFLOW_WWW_USER_FIRSTNAME: ${AIRFLOW_ADMIN_FIRSTNAME:-Airflow}
+      _AIRFLOW_WWW_USER_LASTNAME: ${AIRFLOW_ADMIN_LASTNAME:-Admin}
+      _AIRFLOW_WWW_USER_EMAIL: ${AIRFLOW_ADMIN_EMAIL:-airflowadmin@example.com}
+    user: "0:0"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  postgres-db-volume:

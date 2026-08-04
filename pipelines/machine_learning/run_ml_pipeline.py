@@ -87,6 +87,7 @@ def run_ml_pipeline(
     experiment: str | None = None,
     hurdle_classifier_parameters: Mapping[str, Any] | None = None,
     hurdle_regressor_parameters: Mapping[str, Any] | None = None,
+    prepare_publication: bool = False,
     publish_bigquery: bool = False,
     production_artifacts_dir: Path | str = PRODUCTION_ARTIFACTS_DIR,
     approved_experiment_dir: Path | str = EXPERIMENTS_DIR / "iteration_02",
@@ -95,8 +96,10 @@ def run_ml_pipeline(
         raise ValueError(f"forecast_horizon deve ser um de {FORECAST_HORIZONS}")
     if experiment is not None and experiment != "iteration_02":
         raise ValueError("experiment deve ser iteration_02")
-    if publish_bigquery and experiment is not None:
-        raise ValueError("--publish-bigquery não pode publicar uma execução experimental")
+    if (prepare_publication or publish_bigquery) and experiment is not None:
+        raise ValueError(
+            "Modos de publicação não podem executar uma iteração experimental"
+        )
     analytical_data, source_mode = _load_inputs(
         sales=sales,
         products=products,
@@ -111,7 +114,8 @@ def run_ml_pipeline(
             f"fonte={source_dates.min()}..{source_dates.max()}, "
             f"obrigatório={EXPECTED_DATA_START_DATE}..{FINAL_TEST_END_DATE}"
         )
-    grid_end_date = source_dates.max() if publish_bigquery else FINAL_TEST_END_DATE
+    publication_requested = prepare_publication or publish_bigquery
+    grid_end_date = source_dates.max() if publication_requested else FINAL_TEST_END_DATE
     grid = build_product_day_grid(
         analytical_data.sales,
         analytical_data.products,
@@ -124,7 +128,7 @@ def run_ml_pipeline(
         required_end=FINAL_TEST_END_DATE,
     )
 
-    if publish_bigquery:
+    if publication_requested:
         bundle = build_production_bundle(
             grid,
             analytical_data.products,
@@ -139,16 +143,12 @@ def run_ml_pipeline(
             pipeline_run=bundle.pipeline_run,
             artifacts_dir=production_artifacts_dir,
         )
-        publication = publish_ml_results(
-            bundle,
-            artifacts_dir=production_artifacts_dir,
-            bigquery_client=bigquery_client,
-        )
-        return {
-            "publish_bigquery": True,
-            "run_id": publication["run_id"],
-            "champion_model": publication["champion_model"],
-            "champion_version": publication["champion_version"],
+        result = {
+            "prepare_publication": prepare_publication,
+            "publish_bigquery": publish_bigquery,
+            "run_id": bundle.manifest["run_id"],
+            "champion_model": bundle.manifest["champion_model"],
+            "champion_version": bundle.manifest["champion_version"],
             "forecast_horizons": list(FORECAST_HORIZONS),
             "forecast_rows": int(len(bundle.forecasts)),
             "risk_rows": int(len(bundle.inventory_risk)),
@@ -156,9 +156,25 @@ def run_ml_pipeline(
             "registry_rows": int(len(bundle.model_registry)),
             "active_product_count": int(bundle.manifest["products_processed"]),
             "artifact_paths": production_paths.to_dict(),
-            "publication": publication,
-            "bigquery_write_performed": True,
+            "bigquery_write_performed": False,
         }
+        if prepare_publication:
+            return result
+        publication = publish_ml_results(
+            bundle,
+            artifacts_dir=production_artifacts_dir,
+            bigquery_client=bigquery_client,
+        )
+        result.update(
+            {
+                "run_id": publication["run_id"],
+                "champion_model": publication["champion_model"],
+                "champion_version": publication["champion_version"],
+                "publication": publication,
+                "bigquery_write_performed": True,
+            }
+        )
+        return result
 
     if experiment is not None:
         experiment_result = evaluate_iteration_02(
@@ -357,6 +373,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Executa uma iteração experimental sem substituir os artefatos anteriores.",
     )
     publication_mode.add_argument(
+        "--prepare-publication",
+        action="store_true",
+        help=(
+            "Prepara e valida o pacote produtivo sem gravar no BigQuery, para "
+            "publicação posterior idempotente."
+        ),
+    )
+    publication_mode.add_argument(
         "--publish-bigquery",
         action="store_true",
         help=(
@@ -375,6 +399,7 @@ def main(argv: list[str] | None = None) -> None:
         artifacts_dir=arguments.artifacts_dir,
         staging_dir=arguments.staging_dir,
         experiment=arguments.experiment,
+        prepare_publication=arguments.prepare_publication,
         publish_bigquery=arguments.publish_bigquery,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
